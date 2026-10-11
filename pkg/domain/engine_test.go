@@ -105,6 +105,26 @@ func TestRecordSessionAndBalance(t *testing.T) {
 	}
 }
 
+func TestGetPlayer(t *testing.T) {
+	e := newTestEngine()
+	player, err := e.RegisterPlayer("alice")
+	if err != nil {
+		t.Fatalf("RegisterPlayer: %v", err)
+	}
+
+	got, err := e.GetPlayer(player.ID)
+	if err != nil {
+		t.Fatalf("GetPlayer: %v", err)
+	}
+	if got.Username != "alice" {
+		t.Fatalf("Username = %q, want alice", got.Username)
+	}
+
+	if _, err := e.GetPlayer("does-not-exist"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestRecordSessionUnknownPlayer(t *testing.T) {
 	e := newTestEngine()
 	game, err := e.RegisterGame("dice-run", 10)

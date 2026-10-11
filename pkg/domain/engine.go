@@ -193,6 +193,17 @@ func (e *Engine) RedeemReward(playerID, rewardID string) (Redemption, error) {
 	return redemption, nil
 }
 
+// GetPlayer fetches a single player by ID, distinct from Players() (which
+// lists everyone) — added for the HTTP service's GET /players/{id}, which
+// needs to return 404 for an unknown ID rather than an empty 200 list.
+func (e *Engine) GetPlayer(id string) (Player, error) {
+	player, err := e.players.Get(id)
+	if err != nil {
+		return Player{}, fmt.Errorf("get player: %w", err)
+	}
+	return player, nil
+}
+
 func (e *Engine) Players() []Player { return e.players.List() }
 func (e *Engine) Games() []Game     { return e.games.List() }
 func (e *Engine) Rewards() []Reward { return e.rewards.List() }

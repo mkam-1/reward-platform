@@ -14,7 +14,7 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 0 | Setup | ✅ done |
 | 1 | Domain modeling (`pkg/domain`, `cmd/rewardctl`) | ✅ done |
 | 2 | Concurrency (event processor) | ✅ done |
-| 3 | First HTTP service (`player-service`) | ⬜ not started |
+| 3 | First HTTP service (`player-service`) | ✅ done |
 | 4 | Relational DB (Postgres) | ⬜ not started |
 | 5 | NoSQL DB (DynamoDB) | ⬜ not started |
 | 6 | Split into microservices | ⬜ not started |
@@ -36,9 +36,32 @@ go test ./... -race -cover
 go build -o bin/rewardctl.exe ./cmd/rewardctl
 ./bin/rewardctl.exe demo
 ./bin/rewardctl.exe simulate -players 15 -games 3 -events 300 -workers 8
+
+go build -o bin/player-service.exe ./services/player-service
+$env:PORT = "8080"
+./bin/player-service.exe
 ```
 
 PowerShell 5.1 doesn't support `&&`, so run the two lines separately (as above).
+
+### Trying player-service
+
+With the service running (see above), in another terminal:
+
+```
+curl -s http://localhost:8080/healthz
+curl -s -X POST http://localhost:8080/players -d '{"username":"alice"}'
+curl -s -X POST http://localhost:8080/games -d '{"name":"dice-run","pointsPerSession":15}'
+curl -s -X POST http://localhost:8080/players/player_1/sessions -d '{"gameId":"game_1"}'
+curl -s http://localhost:8080/players/player_1/balance
+```
+
+Or build and run it in Docker:
+
+```
+docker build -f services/player-service/Dockerfile -t reward-platform/player-service:dev .
+docker run --rm -p 8080:8080 reward-platform/player-service:dev
+```
 
 (`make build|test|vet|run` work the same if you have GNU Make installed.)
 
