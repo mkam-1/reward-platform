@@ -50,21 +50,22 @@ func printUsage() {
 }
 
 func runDemo() {
+	ctx := context.Background()
 	engine := domain.NewSystemEngine()
 
-	alice, err := engine.RegisterPlayer("alice")
+	alice, err := engine.RegisterPlayer(ctx, "alice")
 	must(err)
-	bob, err := engine.RegisterPlayer("bob")
-	must(err)
-
-	diceRun, err := engine.RegisterGame("dice-run", 15)
-	must(err)
-	towerClimb, err := engine.RegisterGame("tower-climb", 25)
+	bob, err := engine.RegisterPlayer(ctx, "bob")
 	must(err)
 
-	stickerPack, err := engine.RegisterReward("sticker-pack", 30, 5)
+	diceRun, err := engine.RegisterGame(ctx, "dice-run", 15)
 	must(err)
-	giftCard, err := engine.RegisterReward("$5-gift-card", 500, 2)
+	towerClimb, err := engine.RegisterGame(ctx, "tower-climb", 25)
+	must(err)
+
+	stickerPack, err := engine.RegisterReward(ctx, "sticker-pack", 30, 5)
+	must(err)
+	giftCard, err := engine.RegisterReward(ctx, "$5-gift-card", 500, 2)
 	must(err)
 
 	sessions := []struct {
@@ -77,25 +78,25 @@ func runDemo() {
 		{bob, towerClimb},
 	}
 	for _, s := range sessions {
-		entry, err := engine.RecordSession(s.player.ID, s.game.ID)
+		entry, err := engine.RecordSession(ctx, s.player.ID, s.game.ID)
 		must(err)
 		fmt.Printf("session: %s earned %d points playing %s\n", s.player.Username, entry.Delta, s.game.Name)
 	}
 
 	fmt.Println()
-	printBalances(engine, []domain.Player{alice, bob})
+	printBalances(ctx, engine, []domain.Player{alice, bob})
 
 	fmt.Println()
-	redemption, err := engine.RedeemReward(alice.ID, stickerPack.ID)
+	redemption, err := engine.RedeemReward(ctx, alice.ID, stickerPack.ID)
 	must(err)
 	fmt.Printf("redemption: %s spent %d points on %s\n", alice.Username, redemption.PointsSpent, stickerPack.Name)
 
-	if _, err := engine.RedeemReward(bob.ID, giftCard.ID); err != nil {
+	if _, err := engine.RedeemReward(ctx, bob.ID, giftCard.ID); err != nil {
 		fmt.Printf("redemption: bob tried %s and failed: %v\n", giftCard.Name, err)
 	}
 
 	fmt.Println()
-	printBalances(engine, []domain.Player{alice, bob})
+	printBalances(ctx, engine, []domain.Player{alice, bob})
 }
 
 func runSimulate(args []string) {
@@ -108,16 +109,19 @@ func runSimulate(args []string) {
 
 	engine := domain.NewSystemEngine()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	players := make([]domain.Player, *numPlayers)
 	for i := range players {
-		p, err := engine.RegisterPlayer(fmt.Sprintf("player-%d", i+1))
+		p, err := engine.RegisterPlayer(ctx, fmt.Sprintf("player-%d", i+1))
 		must(err)
 		players[i] = p
 	}
 
 	games := make([]domain.Game, *numGames)
 	for i := range games {
-		g, err := engine.RegisterGame(fmt.Sprintf("game-%d", i+1), 5+rand.IntN(20))
+		g, err := engine.RegisterGame(ctx, fmt.Sprintf("game-%d", i+1), 5+rand.IntN(20))
 		must(err)
 		games[i] = g
 	}
@@ -137,8 +141,6 @@ func runSimulate(args []string) {
 	}()
 
 	proc := domain.NewProcessor(engine, *numWorkers)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	start := time.Now()
 	results := proc.Run(ctx, eventCh)
@@ -157,14 +159,14 @@ func runSimulate(args []string) {
 		proc.Processed(), succeeded, failed, *numWorkers, elapsed)
 
 	fmt.Println()
-	printBalances(engine, players)
+	printBalances(ctx, engine, players)
 }
 
-func printBalances(engine *domain.Engine, players []domain.Player) {
+func printBalances(ctx context.Context, engine *domain.Engine, players []domain.Player) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(w, "PLAYER\tBALANCE")
 	for _, p := range players {
-		balance, err := engine.Balance(p.ID)
+		balance, err := engine.Balance(ctx, p.ID)
 		must(err)
 		fmt.Fprintf(w, "%s\t%d\n", p.Username, balance)
 	}

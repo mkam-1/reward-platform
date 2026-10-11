@@ -1,12 +1,18 @@
 package domain_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"reward-platform/pkg/domain"
 )
+
+// ctx stands in for the per-request context a real caller (an HTTP
+// handler, in player-service) would pass. Tests have no request to
+// derive one from, so a single shared Background() is used throughout.
+var ctx = context.Background()
 
 // fakeClock lets tests assert on timestamps without racing the real clock.
 type fakeClock struct{ t time.Time }
@@ -30,7 +36,7 @@ func TestRegisterPlayer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newTestEngine()
-			p, err := e.RegisterPlayer(tt.username)
+			p, err := e.RegisterPlayer(ctx, tt.username)
 
 			if tt.wantErr {
 				var verr *domain.ValidationError
@@ -71,7 +77,7 @@ func TestRegisterGameValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newTestEngine()
-			_, err := e.RegisterGame(tt.gameName, tt.pointsPerSession)
+			_, err := e.RegisterGame(ctx, tt.gameName, tt.pointsPerSession)
 			if tt.wantErr != (err != nil) {
 				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
 			}
@@ -81,22 +87,22 @@ func TestRegisterGameValidation(t *testing.T) {
 
 func TestRecordSessionAndBalance(t *testing.T) {
 	e := newTestEngine()
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
-	game, err := e.RegisterGame("dice-run", 10)
+	game, err := e.RegisterGame(ctx, "dice-run", 10)
 	if err != nil {
 		t.Fatalf("RegisterGame: %v", err)
 	}
 
 	for i := 0; i < 2; i++ {
-		if _, err := e.RecordSession(player.ID, game.ID); err != nil {
+		if _, err := e.RecordSession(ctx, player.ID, game.ID); err != nil {
 			t.Fatalf("RecordSession: %v", err)
 		}
 	}
 
-	balance, err := e.Balance(player.ID)
+	balance, err := e.Balance(ctx, player.ID)
 	if err != nil {
 		t.Fatalf("Balance: %v", err)
 	}
@@ -107,12 +113,12 @@ func TestRecordSessionAndBalance(t *testing.T) {
 
 func TestGetPlayer(t *testing.T) {
 	e := newTestEngine()
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
 
-	got, err := e.GetPlayer(player.ID)
+	got, err := e.GetPlayer(ctx, player.ID)
 	if err != nil {
 		t.Fatalf("GetPlayer: %v", err)
 	}
@@ -120,19 +126,19 @@ func TestGetPlayer(t *testing.T) {
 		t.Fatalf("Username = %q, want alice", got.Username)
 	}
 
-	if _, err := e.GetPlayer("does-not-exist"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := e.GetPlayer(ctx, "does-not-exist"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
 }
 
 func TestRecordSessionUnknownPlayer(t *testing.T) {
 	e := newTestEngine()
-	game, err := e.RegisterGame("dice-run", 10)
+	game, err := e.RegisterGame(ctx, "dice-run", 10)
 	if err != nil {
 		t.Fatalf("RegisterGame: %v", err)
 	}
 
-	_, err = e.RecordSession("does-not-exist", game.ID)
+	_, err = e.RecordSession(ctx, "does-not-exist", game.ID)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
@@ -140,31 +146,31 @@ func TestRecordSessionUnknownPlayer(t *testing.T) {
 
 func TestBalanceUnknownPlayer(t *testing.T) {
 	e := newTestEngine()
-	if _, err := e.Balance("does-not-exist"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := e.Balance(ctx, "does-not-exist"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
 }
 
 func TestRedeemReward(t *testing.T) {
 	e := newTestEngine()
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
-	game, err := e.RegisterGame("dice-run", 50)
+	game, err := e.RegisterGame(ctx, "dice-run", 50)
 	if err != nil {
 		t.Fatalf("RegisterGame: %v", err)
 	}
-	reward, err := e.RegisterReward("sticker-pack", 30, 1)
+	reward, err := e.RegisterReward(ctx, "sticker-pack", 30, 1)
 	if err != nil {
 		t.Fatalf("RegisterReward: %v", err)
 	}
 
-	if _, err := e.RecordSession(player.ID, game.ID); err != nil {
+	if _, err := e.RecordSession(ctx, player.ID, game.ID); err != nil {
 		t.Fatalf("RecordSession: %v", err)
 	}
 
-	redemption, err := e.RedeemReward(player.ID, reward.ID)
+	redemption, err := e.RedeemReward(ctx, player.ID, reward.ID)
 	if err != nil {
 		t.Fatalf("RedeemReward: %v", err)
 	}
@@ -172,7 +178,7 @@ func TestRedeemReward(t *testing.T) {
 		t.Fatalf("PointsSpent = %d, want 30", redemption.PointsSpent)
 	}
 
-	balance, err := e.Balance(player.ID)
+	balance, err := e.Balance(ctx, player.ID)
 	if err != nil {
 		t.Fatalf("Balance: %v", err)
 	}
@@ -181,23 +187,23 @@ func TestRedeemReward(t *testing.T) {
 	}
 
 	// Stock was 1; a second redemption must fail as out of stock.
-	if _, err := e.RedeemReward(player.ID, reward.ID); !errors.Is(err, domain.ErrOutOfStock) {
+	if _, err := e.RedeemReward(ctx, player.ID, reward.ID); !errors.Is(err, domain.ErrOutOfStock) {
 		t.Fatalf("second redemption error = %v, want ErrOutOfStock", err)
 	}
 }
 
 func TestRedeemRewardInsufficientBalance(t *testing.T) {
 	e := newTestEngine()
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
-	reward, err := e.RegisterReward("console", 1000, 5)
+	reward, err := e.RegisterReward(ctx, "console", 1000, 5)
 	if err != nil {
 		t.Fatalf("RegisterReward: %v", err)
 	}
 
-	_, err = e.RedeemReward(player.ID, reward.ID)
+	_, err = e.RedeemReward(ctx, player.ID, reward.ID)
 	if !errors.Is(err, domain.ErrInsufficientBalance) {
 		t.Fatalf("error = %v, want ErrInsufficientBalance", err)
 	}

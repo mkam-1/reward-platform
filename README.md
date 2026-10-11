@@ -15,7 +15,7 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 1 | Domain modeling (`pkg/domain`, `cmd/rewardctl`) | ✅ done |
 | 2 | Concurrency (event processor) | ✅ done |
 | 3 | First HTTP service (`player-service`) | ✅ done |
-| 4 | Relational DB (Postgres) | ⬜ not started |
+| 4 | Relational DB (Postgres) | ✅ done |
 | 5 | NoSQL DB (DynamoDB) | ⬜ not started |
 | 6 | Split into microservices | ⬜ not started |
 | 7 | Architecture & patterns | ⬜ not started |
@@ -27,26 +27,57 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 13 | CI/CD | ⬜ not started |
 | 14 | Performance & scale (capstone) | ⬜ not started |
 
-## Running things
+## Dev environment: WSL2 Ubuntu
+
+Go development happens inside **WSL2 Ubuntu**, not native Windows. Reason:
+this machine has Windows **Smart App Control** enabled, which blocks
+unsigned binaries — including Go's own linker and everything `go build`
+produces. That's unfixable short of disabling Smart App Control (a
+one-way switch — re-enabling it later requires a full Windows reinstall),
+so instead Go/gcc/Docker CLI are installed inside a WSL2 Ubuntu distro,
+where Smart App Control doesn't apply at all (it only governs native
+Windows binaries, not Linux ELF binaries). Docker Desktop already runs on
+WSL2 as its own backend, so this adds one more distro alongside it, not a
+new system-wide feature.
+
+The repo lives at `/mnt/d/reward-platform` inside WSL — the same files as
+`D:\reward-platform` on the Windows side, just accessed through WSL's
+mount of the D: drive.
+
+From a WSL Ubuntu terminal:
 
 ```
+cd /mnt/d/reward-platform
 go build ./...
 go vet ./...
 go test ./... -race -cover
-go build -o bin/rewardctl.exe ./cmd/rewardctl
-./bin/rewardctl.exe demo
-./bin/rewardctl.exe simulate -players 15 -games 3 -events 300 -workers 8
-
-go build -o bin/player-service.exe ./services/player-service
-$env:PORT = "8080"
-./bin/player-service.exe
 ```
 
-PowerShell 5.1 doesn't support `&&`, so run the two lines separately (as above).
+(From a Windows terminal instead, prefix with `wsl.exe -d Ubuntu --`, e.g.
+`wsl.exe -d Ubuntu -- go build -C /mnt/d/reward-platform ./...`.)
 
-### Trying player-service
+## Running things
 
-With the service running (see above), in another terminal:
+```
+go build -o bin/rewardctl ./cmd/rewardctl
+./bin/rewardctl demo
+./bin/rewardctl simulate -players 15 -games 3 -events 300 -workers 8
+```
+
+### Trying player-service (with real Postgres)
+
+player-service requires a real Postgres database — `DATABASE_URL` is a
+required env var, not defaulted, so a missing connection string fails
+loudly on startup instead of silently running in memory. Easiest way to
+run the whole stack (Postgres + player-service) together:
+
+```
+cd deploy
+docker compose up --build -d
+docker compose logs player-service   # confirms migrations ran
+```
+
+Then, from any terminal:
 
 ```
 curl -s http://localhost:8080/healthz
@@ -56,23 +87,46 @@ curl -s -X POST http://localhost:8080/players/player_1/sessions -d '{"gameId":"g
 curl -s http://localhost:8080/players/player_1/balance
 ```
 
-Or build and run it in Docker:
+The actual point of this phase — prove it's really persisted, not just
+in memory:
 
 ```
-docker build -f services/player-service/Dockerfile -t reward-platform/player-service:dev .
-docker run --rm -p 8080:8080 reward-platform/player-service:dev
+docker compose restart player-service
+curl -s http://localhost:8080/players   # player_1 is still there
 ```
 
-(`make build|test|vet|run` work the same if you have GNU Make installed.)
+Tear down when done:
 
-### One thing about this machine's Go setup
+```
+docker compose down          # add -v too to also delete the Postgres volume
+```
 
-- **`go test` needs `GOTMPDIR` set outside `%LOCALAPPDATA%\Temp`.** A local
-  Application Control policy blocks executables run from the default temp
-  directory, which is where `go test` builds and runs its test binary. Fix:
-  `export GOTMPDIR="$(pwd)/.gotmp"` before `go test` (the Makefile's `test`
-  target already does this).
+### Integration tests (real Postgres via testcontainers)
 
-(Go is now `windows/amd64` and a MinGW-w64 `gcc` is installed, so `-race`
-works — run it from a fresh shell so it picks up the PATH change from the
-`gcc` install.)
+Excluded from the default `go test ./...` run (needs Docker, takes real
+seconds) — run explicitly:
+
+```
+go test -tags=integration ./services/player-service/internal/postgres/... -v
+```
+
+Inside WSL, testcontainers needs `DOCKER_HOST` pointed at the socket
+Docker Desktop's WSL integration exposes (already set permanently in
+`/etc/profile.d/go.sh` in this environment):
+
+```
+export DOCKER_HOST=unix:///mnt/wsl/docker-desktop-bind-mounts/Ubuntu/docker.sock
+```
+
+### If you're on native Windows instead
+
+`make build|test|vet|run` work the same if you have GNU Make installed.
+Two machine-specific things applied before the WSL2 move, kept here in
+case native Windows Go ever comes back into play:
+
+- **`go test` needs `GOTMPDIR` set outside `%LOCALAPPDATA%\Temp`** — Smart
+  App Control blocks executables run from the default temp directory.
+  Fix: `export GOTMPDIR="$(pwd)/.gotmp"` before `go test`.
+- **`-race` needs cgo**, which needs a C compiler — a MinGW-w64 `gcc` is
+  installed, and Go's `CC` env config points straight at it
+  (`go env CC`), bypassing any PATH issues.

@@ -94,7 +94,7 @@ func (p *Processor) worker(ctx context.Context, events <-chan SessionEvent, resu
 				// events was closed and drained: no more work, exit.
 				return
 			}
-			entry, err := p.engine.RecordSession(event.PlayerID, event.GameID)
+			entry, err := p.engine.RecordSession(ctx, event.PlayerID, event.GameID)
 			p.processed.Add(1)
 
 			select {

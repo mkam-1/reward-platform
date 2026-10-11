@@ -23,18 +23,18 @@ import (
 func TestRedeemRewardConcurrentIsSafe(t *testing.T) {
 	e := domain.NewEngine(domain.SystemClock{})
 
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
-	game, err := e.RegisterGame("dice-run", 1000)
+	game, err := e.RegisterGame(ctx, "dice-run", 1000)
 	if err != nil {
 		t.Fatalf("RegisterGame: %v", err)
 	}
-	if _, err := e.RecordSession(player.ID, game.ID); err != nil {
+	if _, err := e.RecordSession(ctx, player.ID, game.ID); err != nil {
 		t.Fatalf("RecordSession: %v", err)
 	}
-	reward, err := e.RegisterReward("limited-edition-skin", 100, 1) // only 1 in stock
+	reward, err := e.RegisterReward(ctx, "limited-edition-skin", 100, 1) // only 1 in stock
 	if err != nil {
 		t.Fatalf("RegisterReward: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestRedeemRewardConcurrentIsSafe(t *testing.T) {
 	for i := 0; i < attempts; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := e.RedeemReward(player.ID, reward.ID)
+			_, err := e.RedeemReward(ctx, player.ID, reward.ID)
 			switch {
 			case err == nil:
 				successes.Add(1)

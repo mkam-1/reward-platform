@@ -27,7 +27,7 @@ func (a *api) handleCreatePlayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	player, err := a.engine.RegisterPlayer(req.Username)
+	player, err := a.engine.RegisterPlayer(r.Context(), req.Username)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -36,7 +36,11 @@ func (a *api) handleCreatePlayer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleListPlayers(w http.ResponseWriter, r *http.Request) {
-	players := a.engine.Players()
+	players, err := a.engine.Players(r.Context())
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
 	out := make([]playerResponse, len(players))
 	for i, p := range players {
 		out[i] = toPlayerResponse(p)
@@ -45,7 +49,7 @@ func (a *api) handleListPlayers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
-	player, err := a.engine.GetPlayer(r.PathValue("id"))
+	player, err := a.engine.GetPlayer(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -55,7 +59,7 @@ func (a *api) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	balance, err := a.engine.Balance(id)
+	balance, err := a.engine.Balance(r.Context(), id)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -70,7 +74,7 @@ func (a *api) handleRecordSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := a.engine.RecordSession(r.PathValue("id"), req.GameID)
+	entry, err := a.engine.RecordSession(r.Context(), r.PathValue("id"), req.GameID)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -85,7 +89,7 @@ func (a *api) handleRedeemReward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redemption, err := a.engine.RedeemReward(r.PathValue("id"), req.RewardID)
+	redemption, err := a.engine.RedeemReward(r.Context(), r.PathValue("id"), req.RewardID)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -100,7 +104,7 @@ func (a *api) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	game, err := a.engine.RegisterGame(req.Name, req.PointsPerSession)
+	game, err := a.engine.RegisterGame(r.Context(), req.Name, req.PointsPerSession)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -109,7 +113,7 @@ func (a *api) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleListGames(w http.ResponseWriter, r *http.Request) {
-	games := a.engine.Games()
+	games := a.engine.Games(r.Context())
 	out := make([]gameResponse, len(games))
 	for i, g := range games {
 		out[i] = toGameResponse(g)
@@ -124,7 +128,7 @@ func (a *api) handleCreateReward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reward, err := a.engine.RegisterReward(req.Name, req.CostPoints, req.Stock)
+	reward, err := a.engine.RegisterReward(r.Context(), req.Name, req.CostPoints, req.Stock)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
@@ -133,7 +137,7 @@ func (a *api) handleCreateReward(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleListRewards(w http.ResponseWriter, r *http.Request) {
-	rewards := a.engine.Rewards()
+	rewards := a.engine.Rewards(r.Context())
 	out := make([]rewardResponse, len(rewards))
 	for i, rw := range rewards {
 		out[i] = toRewardResponse(rw)

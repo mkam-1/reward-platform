@@ -17,6 +17,7 @@ import (
 
 	"reward-platform/pkg/domain"
 	"reward-platform/services/player-service/internal/api"
+	"reward-platform/services/player-service/internal/postgres"
 )
 
 func main() {
@@ -27,7 +28,40 @@ func main() {
 		port = "8080"
 	}
 
-	engine := domain.NewSystemEngine()
+	// DATABASE_URL is required, not defaulted — a service silently
+	// falling back to in-memory storage because a connection string was
+	// missing would be a much worse bug than refusing to start at all.
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		logger.Error("DATABASE_URL is required")
+		os.Exit(1)
+	}
+	migrationsDir := os.Getenv("MIGRATIONS_DIR")
+	if migrationsDir == "" {
+		migrationsDir = "services/player-service/migrations"
+	}
+
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelStartup()
+
+	db, err := postgres.Open(startupCtx, databaseURL)
+	if err != nil {
+		logger.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := postgres.Migrate(db, migrationsDir); err != nil {
+		logger.Error("failed to run migrations", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("migrations applied")
+
+	engine := domain.NewEngineWithRepositories(
+		domain.SystemClock{},
+		postgres.NewPlayerRepository(db),
+		postgres.NewLedgerRepository(db),
+	)
 	handler := api.NewHandler(engine, logger)
 
 	srv := &http.Server{

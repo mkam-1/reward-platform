@@ -10,11 +10,11 @@ import (
 
 func TestProcessorRunProcessesEveryEvent(t *testing.T) {
 	e := domain.NewEngine(domain.SystemClock{})
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
-	game, err := e.RegisterGame("dice-run", 10)
+	game, err := e.RegisterGame(ctx, "dice-run", 10)
 	if err != nil {
 		t.Fatalf("RegisterGame: %v", err)
 	}
@@ -29,10 +29,10 @@ func TestProcessorRunProcessesEveryEvent(t *testing.T) {
 	}()
 
 	proc := domain.NewProcessor(e, 8) // 8 workers racing for the same player's ledger entries
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	results := proc.Run(ctx, events)
+	results := proc.Run(runCtx, events)
 
 	got := 0
 	for res := range results { // closes automatically once every worker exits
@@ -52,7 +52,7 @@ func TestProcessorRunProcessesEveryEvent(t *testing.T) {
 		t.Fatalf("Processed() = %d, want %d", proc.Processed(), eventCount)
 	}
 
-	balance, err := e.Balance(player.ID)
+	balance, err := e.Balance(ctx, player.ID)
 	if err != nil {
 		t.Fatalf("Balance: %v", err)
 	}
@@ -63,11 +63,11 @@ func TestProcessorRunProcessesEveryEvent(t *testing.T) {
 
 func TestProcessorRunStopsOnCancel(t *testing.T) {
 	e := domain.NewEngine(domain.SystemClock{})
-	player, err := e.RegisterPlayer("alice")
+	player, err := e.RegisterPlayer(ctx, "alice")
 	if err != nil {
 		t.Fatalf("RegisterPlayer: %v", err)
 	}
-	game, err := e.RegisterGame("dice-run", 10)
+	game, err := e.RegisterGame(ctx, "dice-run", 10)
 	if err != nil {
 		t.Fatalf("RegisterGame: %v", err)
 	}
@@ -86,10 +86,10 @@ func TestProcessorRunStopsOnCancel(t *testing.T) {
 	}()
 
 	proc := domain.NewProcessor(e, 4)
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel() // belt-and-suspenders: also cancel explicitly below once 5 events are in
 
-	results := proc.Run(ctx, events)
+	results := proc.Run(runCtx, events)
 
 	// Let a handful of events through, then cancel.
 	drained := 0

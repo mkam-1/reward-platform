@@ -5,13 +5,11 @@
 FROM golang:1.27 AS build
 WORKDIR /src
 
-# Copying go.mod (and go.sum, once one exists) before the rest of the
-# source means `go mod download` only reruns when dependencies actually
-# change, not on every code edit — Docker caches each layer and reuses it
-# unchanged. No external dependencies yet (phase 4 adds the first one),
-# so this layer has nothing to download today, but the pattern is worth
-# having in place before it matters.
-COPY go.mod ./
+# Copying go.mod/go.sum before the rest of the source means `go mod
+# download` only reruns when dependencies actually change, not on every
+# code edit — Docker caches each layer and reuses it unchanged as long as
+# these two files are the same.
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY pkg ./pkg
@@ -28,6 +26,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/player-service ./services/player-s
 # way in.
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/player-service /player-service
+COPY services/player-service/migrations /migrations
 
+ENV MIGRATIONS_DIR=/migrations
 EXPOSE 8080
 ENTRYPOINT ["/player-service"]
