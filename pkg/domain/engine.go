@@ -20,6 +20,16 @@ type Engine struct {
 
 	ledgerMu sync.RWMutex
 	ledger   []LedgerEntry
+
+	// redeemMu serializes RedeemReward end to end. The check-balance,
+	// decrement-stock and append-ledger-entry steps below can't each be
+	// made atomic individually and still add up to one atomic operation,
+	// so instead one mutex covers the whole sequence: only one redemption
+	// runs at a time, platform-wide. That's coarser than it needs to be —
+	// a per-reward lock would let redemptions for different rewards run
+	// concurrently — but it's the simplest thing that's correct, and
+	// correct-but-simple beats fast-but-racy. Revisited in phase 7.
+	redeemMu sync.Mutex
 }
 
 // NewEngine builds an Engine using the supplied Clock. Tests pass a fake
@@ -135,15 +145,13 @@ func (e *Engine) Balance(playerID string) (int, error) {
 }
 
 // RedeemReward exchanges a player's points for a reward, failing if they
-// can't afford it or it's out of stock.
-//
-// Known limitation, left in deliberately: the balance check, stock
-// decrement and ledger append below are three separate steps rather than
-// one atomic operation, so two concurrent redemptions for the same player
-// or reward can race past the checks together. Engine isn't safe for
-// concurrent redemptions yet — that gap is exactly what phase 2
-// (concurrency) exists to close.
+// can't afford it or it's out of stock. Concurrent calls are serialized by
+// redeemMu (see its comment on the Engine struct) so two redemptions can
+// never both pass the stock/balance checks for the last unit of a reward.
 func (e *Engine) RedeemReward(playerID, rewardID string) (Redemption, error) {
+	e.redeemMu.Lock()
+	defer e.redeemMu.Unlock()
+
 	if _, err := e.players.Get(playerID); err != nil {
 		return Redemption{}, fmt.Errorf("redeem: %w", err)
 	}

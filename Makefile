@@ -10,7 +10,7 @@ build:
 
 test:
 	@mkdir -p $(GOTMPDIR)
-	go test ./... -cover
+	go test ./... -race -cover
 
 vet:
 	go vet ./...

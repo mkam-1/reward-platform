@@ -5,9 +5,13 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"reward-platform/pkg/domain"
 )
@@ -21,6 +25,8 @@ func main() {
 	switch os.Args[1] {
 	case "demo":
 		runDemo()
+	case "simulate":
+		runSimulate(os.Args[2:])
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -34,9 +40,13 @@ func printUsage() {
 	fmt.Println(`rewardctl - exercise the reward-platform domain engine
 
     Usage:
-      rewardctl demo    run a scripted walkthrough: register players, games and
-                         rewards, simulate play sessions, and redeem a reward
-      rewardctl help    show this message`)
+      rewardctl demo        run a scripted walkthrough: register players, games
+                             and rewards, simulate play sessions, and redeem a
+                             reward
+      rewardctl simulate    fire a batch of play-session events at a worker
+                             pool concurrently (flags: -players -games -events
+                             -workers)
+      rewardctl help         show this message`)
 }
 
 func runDemo() {
@@ -86,6 +96,68 @@ func runDemo() {
 
 	fmt.Println()
 	printBalances(engine, []domain.Player{alice, bob})
+}
+
+func runSimulate(args []string) {
+	fs := flag.NewFlagSet("simulate", flag.ExitOnError)
+	numPlayers := fs.Int("players", 20, "number of players to register")
+	numGames := fs.Int("games", 3, "number of games to register")
+	numEvents := fs.Int("events", 500, "number of play-session events to process")
+	numWorkers := fs.Int("workers", 8, "number of concurrent workers processing events")
+	must(fs.Parse(args))
+
+	engine := domain.NewSystemEngine()
+
+	players := make([]domain.Player, *numPlayers)
+	for i := range players {
+		p, err := engine.RegisterPlayer(fmt.Sprintf("player-%d", i+1))
+		must(err)
+		players[i] = p
+	}
+
+	games := make([]domain.Game, *numGames)
+	for i := range games {
+		g, err := engine.RegisterGame(fmt.Sprintf("game-%d", i+1), 5+rand.IntN(20))
+		must(err)
+		games[i] = g
+	}
+
+	// Producer goroutine: generates the event stream and closes the
+	// channel when done, which is what lets the processor's workers know
+	// there's no more work and exit cleanly.
+	eventCh := make(chan domain.SessionEvent)
+	go func() {
+		defer close(eventCh)
+		for i := 0; i < *numEvents; i++ {
+			eventCh <- domain.SessionEvent{
+				PlayerID: players[rand.IntN(len(players))].ID,
+				GameID:   games[rand.IntN(len(games))].ID,
+			}
+		}
+	}()
+
+	proc := domain.NewProcessor(engine, *numWorkers)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	results := proc.Run(ctx, eventCh)
+
+	succeeded, failed := 0, 0
+	for res := range results {
+		if res.Err != nil {
+			failed++
+			continue
+		}
+		succeeded++
+	}
+	elapsed := time.Since(start)
+
+	fmt.Printf("simulate: processed %d events (%d ok, %d failed) across %d workers in %s\n",
+		proc.Processed(), succeeded, failed, *numWorkers, elapsed)
+
+	fmt.Println()
+	printBalances(engine, players)
 }
 
 func printBalances(engine *domain.Engine, players []domain.Player) {

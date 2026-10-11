@@ -13,7 +13,7 @@ Domain: players earn points by playing games, and redeem points for rewards.
 |---|-------|--------|
 | 0 | Setup | ✅ done |
 | 1 | Domain modeling (`pkg/domain`, `cmd/rewardctl`) | ✅ done |
-| 2 | Concurrency (event processor) | ⬜ not started |
+| 2 | Concurrency (event processor) | ✅ done |
 | 3 | First HTTP service (`player-service`) | ⬜ not started |
 | 4 | Relational DB (Postgres) | ⬜ not started |
 | 5 | NoSQL DB (DynamoDB) | ⬜ not started |
@@ -32,23 +32,24 @@ Domain: players earn points by playing games, and redeem points for rewards.
 ```
 go build ./...
 go vet ./...
-go test ./... -cover
+go test ./... -race -cover
 go build -o bin/rewardctl.exe ./cmd/rewardctl
 ./bin/rewardctl.exe demo
+./bin/rewardctl.exe simulate -players 15 -games 3 -events 300 -workers 8
 ```
 
 PowerShell 5.1 doesn't support `&&`, so run the two lines separately (as above).
 
 (`make build|test|vet|run` work the same if you have GNU Make installed.)
 
-### Two things about this machine's Go setup
+### One thing about this machine's Go setup
 
 - **`go test` needs `GOTMPDIR` set outside `%LOCALAPPDATA%\Temp`.** A local
   Application Control policy blocks executables run from the default temp
   directory, which is where `go test` builds and runs its test binary. Fix:
   `export GOTMPDIR="$(pwd)/.gotmp"` before `go test` (the Makefile's `test`
   target already does this).
-- **The installed Go toolchain is `windows/386` (32-bit)**, so `-race` (the
-  data race detector) isn't available — it requires a 64-bit toolchain.
-  This is fine through phase 1, but phase 2 (concurrency) leans on `-race`
-  to catch real bugs, so switching to 64-bit Go before then is recommended.
+
+(Go is now `windows/amd64` and a MinGW-w64 `gcc` is installed, so `-race`
+works — run it from a fresh shell so it picks up the PATH change from the
+`gcc` install.)
