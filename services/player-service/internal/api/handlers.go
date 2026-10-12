@@ -16,7 +16,7 @@ type api struct {
 	logger *slog.Logger
 }
 
-func (a *api) handleHealthz(w http.ResponseWriter, r *http.Request) {
+func (a *api) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

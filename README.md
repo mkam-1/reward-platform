@@ -21,7 +21,7 @@ Real architectural decisions along the way are recorded as ADRs in
 | 5 | NoSQL DB (DynamoDB) | ✅ done |
 | 6 | Split into microservices | ✅ done |
 | 7 | Architecture & patterns | ✅ done |
-| 8 | Testing depth | ⬜ not started |
+| 8 | Testing depth | ✅ done |
 | 9 | Observability | ⬜ not started |
 | 10 | Containers & Kubernetes | ⬜ not started |
 | 11 | AWS deployment (ECS/DynamoDB/CloudWatch) | ⬜ not started |
@@ -99,6 +99,30 @@ inside a single module at that point.
 
 (From a Windows terminal instead, prefix with `wsl.exe -d Ubuntu --`, e.g.
 `wsl.exe -d Ubuntu -- go build -C /mnt/d/reward-platform reward-platform/pkg/domain/...`.)
+
+## Quality tooling (phase 8)
+
+```
+# Lint every module (config: .golangci.yml at repo root)
+bash scripts/lint-all.sh    # or: cd <module> && golangci-lint run ./...
+
+# Coverage gate — fails if any module's real (unit-testable) coverage
+# drops below the threshold; see the script's own comments for exactly
+# which packages are deliberately excluded and why
+bash scripts/check-coverage.sh 60
+
+# Go's built-in fuzzer against domain validation (RegisterPlayer/Game/Reward)
+cd pkg/domain
+go test -run=^$ -fuzz=FuzzRegisterPlayer -fuzztime=30s
+```
+
+Contract tests for the SQS event schemas (`mq/contract_test.go`, golden
+files in `mq/testdata/`) and a `gomock`-generated mock for
+`rewards-service`'s `PlayerBalance` interface
+(`services/rewards-service/internal/catalog/mocks/`, demonstrating
+call-order verification `gomock.InOrder` gives that a hand-written fake
+wouldn't without extra bookkeeping) run as part of the normal
+`go test ./...` for their modules — nothing special needed.
 
 ## Running things
 

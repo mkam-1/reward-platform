@@ -1,0 +1,41 @@
+version: "2"
+
+# One config at the repo root, discovered automatically from any module
+# subdirectory (go.work split each service into its own go.mod — see
+# ADR 0006 — but golangci-lint itself still needs to run once per module,
+# same as go build/test do).
+linters:
+  default: standard
+  enable:
+    - bodyclose      # HTTP response bodies that are never closed — a real leak
+    - sqlclosecheck  # same idea for *sql.Rows/*sql.Stmt
+    - unconvert      # pointless type conversions
+    - misspell       # typos in comments/strings
+    - gosec          # common security footguns (though see exclusions below)
+    - revive         # broader style/lint coverage than go vet alone
+  settings:
+    revive:
+      rules:
+        # This project's deliberate convention (see CLAUDE.md / system
+        # instructions it's developed under): no comment on an exported
+        # symbol unless there's a non-obvious WHY to explain — a comment
+        # that just restates a well-named function's signature is noise,
+        # not documentation. revive's default "exported" rule demands a
+        # doc comment on every exported identifier unconditionally,
+        # which is the opposite policy. Disabled; its other checks
+        # (unused-parameter, blank-imports, etc.) stay on.
+        - name: exported
+          disabled: true
+  exclusions:
+    rules:
+      # Test files legitimately do things gosec flags in production code
+      # (hardcoded test "secrets" like "demo-key-1", weak randomness for
+      # test IDs) — noise, not findings, in that context.
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

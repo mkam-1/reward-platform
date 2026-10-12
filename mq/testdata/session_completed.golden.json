@@ -1,0 +1,7 @@
+{
+  "playerId": "player_1",
+  "gameId": "game_1",
+  "points": 15,
+  "reason": "played dice-run",
+  "idempotencyKey": "session_1"
+}

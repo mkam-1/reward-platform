@@ -121,6 +121,7 @@ func runSimulate(args []string) {
 
 	games := make([]domain.Game, *numGames)
 	for i := range games {
+		//nolint:gosec // math/rand/v2 is fine here — picking a points value for fake test data, not a security context
 		g, err := engine.RegisterGame(ctx, fmt.Sprintf("game-%d", i+1), 5+rand.IntN(20))
 		must(err)
 		games[i] = g
@@ -133,6 +134,7 @@ func runSimulate(args []string) {
 	go func() {
 		defer close(eventCh)
 		for i := 0; i < *numEvents; i++ {
+			//nolint:gosec // math/rand/v2 is fine here — picking which fake player/game to simulate, not a security context
 			eventCh <- domain.SessionEvent{
 				PlayerID: players[rand.IntN(len(players))].ID,
 				GameID:   games[rand.IntN(len(games))].ID,
@@ -164,13 +166,16 @@ func runSimulate(args []string) {
 
 func printBalances(ctx context.Context, engine *domain.Engine, players []domain.Player) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "PLAYER\tBALANCE")
+	// Writes to a stdout-backed tabwriter: an error here would mean
+	// stdout itself is broken, which isn't something this CLI can
+	// usefully recover from — not worth a must() per line.
+	_, _ = fmt.Fprintln(w, "PLAYER\tBALANCE")
 	for _, p := range players {
 		balance, err := engine.Balance(ctx, p.ID)
 		must(err)
-		fmt.Fprintf(w, "%s\t%d\n", p.Username, balance)
+		_, _ = fmt.Fprintf(w, "%s\t%d\n", p.Username, balance)
 	}
-	w.Flush()
+	_ = w.Flush()
 }
 
 func must(err error) {

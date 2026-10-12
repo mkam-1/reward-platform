@@ -25,8 +25,8 @@ import (
 	"reward-platform/services/rewards-service/internal/grpcclient"
 	"reward-platform/services/rewards-service/internal/resilience"
 
-	playerv1 "reward-platform/proto/player/v1"
 	"reward-platform/pkg/domain"
+	playerv1 "reward-platform/proto/player/v1"
 )
 
 func main() {
@@ -80,7 +80,7 @@ func main() {
 		logger.Error("failed to build player-service grpc client", "error", err)
 		os.Exit(1)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // process is exiting either way; nothing left to do with a close error
 
 	// Decorator chain, outermost first: CircuitBreaker wraps Retrying
 	// wraps the raw gRPC client. See resilience's package doc comment

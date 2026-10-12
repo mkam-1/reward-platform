@@ -73,7 +73,7 @@ func main() {
 		logger.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // process is exiting either way; nothing left to do with a close error
 
 	if err := postgres.Migrate(db, migrationsDir); err != nil {
 		logger.Error("failed to run migrations", "error", err)

@@ -184,7 +184,7 @@ func (r *LedgerRepository) PendingOutboxEvents(ctx context.Context, limit int) (
 	if err != nil {
 		return nil, fmt.Errorf("pending outbox events: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // an error closing an already-fully-read cursor isn't actionable
 
 	var out []OutboxRow
 	for rows.Next() {

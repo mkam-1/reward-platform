@@ -8,6 +8,8 @@ package grpcapi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,7 +34,11 @@ func (s *Server) GetBalance(ctx context.Context, req *playerv1.GetBalanceRequest
 	if err != nil {
 		return nil, grpcError(err)
 	}
-	return &playerv1.GetBalanceResponse{Balance: int32(balance)}, nil
+	balance32, err := toInt32(balance)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &playerv1.GetBalanceResponse{Balance: balance32}, nil
 }
 
 func (s *Server) DebitPoints(ctx context.Context, req *playerv1.DebitPointsRequest) (*playerv1.DebitPointsResponse, error) {
@@ -40,7 +46,24 @@ func (s *Server) DebitPoints(ctx context.Context, req *playerv1.DebitPointsReque
 	if err != nil {
 		return nil, grpcError(err)
 	}
-	return &playerv1.DebitPointsResponse{NewBalance: int32(newBalance)}, nil
+	newBalance32, err := toInt32(newBalance)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &playerv1.DebitPointsResponse{NewBalance: newBalance32}, nil
+}
+
+// toInt32 guards the int -> int32 narrowing the proto wire format
+// requires (balances are plain Go int, 64-bit on this platform). A
+// balance north of ~2.1 billion points is nowhere near realistic for
+// this domain today, but silently wrapping to a negative or nonsense
+// number if it ever happened would be a far worse bug than returning an
+// honest error — gosec's G115 flagged the bare conversion this replaces.
+func toInt32(n int) (int32, error) {
+	if n > math.MaxInt32 || n < math.MinInt32 {
+		return 0, fmt.Errorf("value %d out of int32 range", n)
+	}
+	return int32(n), nil
 }
 
 // grpcError maps a domain error to the gRPC status code that best

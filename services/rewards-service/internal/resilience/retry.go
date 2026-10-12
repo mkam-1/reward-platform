@@ -53,9 +53,9 @@ type retryOptions struct {
 
 type RetryOption func(*retryOptions)
 
-func WithMaxAttempts(n int) RetryOption { return func(o *retryOptions) { o.maxAttempts = n } }
+func WithMaxAttempts(n int) RetryOption         { return func(o *retryOptions) { o.maxAttempts = n } }
 func WithBaseDelay(d time.Duration) RetryOption { return func(o *retryOptions) { o.baseDelay = d } }
-func WithMaxDelay(d time.Duration) RetryOption   { return func(o *retryOptions) { o.maxDelay = d } }
+func WithMaxDelay(d time.Duration) RetryOption  { return func(o *retryOptions) { o.maxDelay = d } }
 
 // Retrying retries a transient failure with exponential backoff
 // (baseDelay, doubling, capped at maxDelay) up to maxAttempts times.

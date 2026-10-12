@@ -143,7 +143,7 @@ func TestCircuitBreakerHalfOpenRecovery(t *testing.T) {
 	cb := resilience.NewCircuitBreaker(inner, resilience.WithFailureThreshold(3), resilience.WithCooldown(time.Minute), resilience.WithClock(clock))
 
 	for i := 0; i < 3; i++ {
-		cb.GetBalance(ctx, "player_1")
+		_, _ = cb.GetBalance(ctx, "player_1") // priming consecutive failures to trip the breaker; outcome checked below
 	}
 	// Confirm it's open.
 	if _, err := cb.GetBalance(ctx, "player_1"); !errors.Is(err, resilience.ErrCircuitOpen) {
@@ -181,7 +181,7 @@ func TestCircuitBreakerHalfOpenFailureReopensImmediately(t *testing.T) {
 	cb := resilience.NewCircuitBreaker(inner, resilience.WithFailureThreshold(3), resilience.WithCooldown(time.Minute), resilience.WithClock(clock))
 
 	for i := 0; i < 3; i++ {
-		cb.GetBalance(ctx, "player_1")
+		_, _ = cb.GetBalance(ctx, "player_1") // priming consecutive failures to trip the breaker
 	}
 	clock.Advance(2 * time.Minute)
 

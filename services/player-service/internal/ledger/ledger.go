@@ -31,7 +31,7 @@ type outboxAppender interface {
 type fallbackOutboxAppender struct{ domain.LedgerRepository }
 
 func (f fallbackOutboxAppender) AppendWithOutbox(ctx context.Context, entry domain.LedgerEntry, _ domain.OutboxEvent) (bool, error) {
-	return f.LedgerRepository.Append(ctx, entry)
+	return f.Append(ctx, entry)
 }
 
 // PlayerLedger owns player registration and every points movement.

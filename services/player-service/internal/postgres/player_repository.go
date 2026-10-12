@@ -59,7 +59,7 @@ func (r *PlayerRepository) List(ctx context.Context) ([]domain.Player, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list players: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // an error closing an already-fully-read cursor isn't actionable
 
 	var players []domain.Player
 	for rows.Next() {

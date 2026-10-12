@@ -18,6 +18,10 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
+
+	// Side-effect import: registers the "file" source driver migrate
+	// uses to read .up.sql/.down.sql files off disk (the "file://" URL
+	// scheme passed to migrate.NewWithDatabaseInstance below).
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
@@ -30,7 +34,7 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		_ = db.Close() // best-effort: we're already returning the ping error, a close error wouldn't add information
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 	return db, nil

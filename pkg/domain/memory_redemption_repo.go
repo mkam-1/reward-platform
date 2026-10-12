@@ -19,7 +19,7 @@ func NewMemoryRedemptionRepository() RedemptionRepository {
 	return &memoryRedemptionRepository{data: make(map[string]Redemption)}
 }
 
-func (r *memoryRedemptionRepository) Create(ctx context.Context, redemption Redemption) (bool, error) {
+func (r *memoryRedemptionRepository) Create(_ context.Context, redemption Redemption) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -30,7 +30,7 @@ func (r *memoryRedemptionRepository) Create(ctx context.Context, redemption Rede
 	return true, nil
 }
 
-func (r *memoryRedemptionRepository) Get(ctx context.Context, id string) (Redemption, error) {
+func (r *memoryRedemptionRepository) Get(_ context.Context, id string) (Redemption, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -41,7 +41,7 @@ func (r *memoryRedemptionRepository) Get(ctx context.Context, id string) (Redemp
 	return redemption, nil
 }
 
-func (r *memoryRedemptionRepository) ListByPlayer(ctx context.Context, playerID string) ([]Redemption, error) {
+func (r *memoryRedemptionRepository) ListByPlayer(_ context.Context, playerID string) ([]Redemption, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,9 +34,13 @@ func (c *PlayerBalanceClient) GetBalance(ctx context.Context, playerID string) (
 }
 
 func (c *PlayerBalanceClient) DebitPoints(ctx context.Context, playerID string, amount int, reason, idempotencyKey string) (int, error) {
+	amount32, err := toInt32(amount)
+	if err != nil {
+		return 0, err
+	}
 	resp, err := c.client.DebitPoints(ctx, &playerv1.DebitPointsRequest{
 		PlayerId:       playerID,
-		Amount:         int32(amount),
+		Amount:         amount32,
 		Reason:         reason,
 		IdempotencyKey: idempotencyKey,
 	})
@@ -43,6 +48,18 @@ func (c *PlayerBalanceClient) DebitPoints(ctx context.Context, playerID string, 
 		return 0, domainError(err)
 	}
 	return int(resp.GetNewBalance()), nil
+}
+
+// toInt32 guards the int -> int32 narrowing the proto wire format
+// requires — the client-side mirror of grpcapi's same-named helper. A
+// redemption cost north of ~2.1 billion points is nowhere near
+// realistic, but silently wrapping to a negative amount if it ever
+// happened would be a far worse bug than returning an honest error.
+func toInt32(n int) (int32, error) {
+	if n > math.MaxInt32 || n < math.MinInt32 {
+		return 0, fmt.Errorf("value %d out of int32 range", n)
+	}
+	return int32(n), nil
 }
 
 // domainError translates a gRPC status code back into the domain
