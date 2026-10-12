@@ -23,6 +23,7 @@ import (
 	"reward-platform/services/rewards-service/internal/catalog"
 	"reward-platform/services/rewards-service/internal/dynamodb"
 	"reward-platform/services/rewards-service/internal/grpcclient"
+	"reward-platform/services/rewards-service/internal/resilience"
 
 	playerv1 "reward-platform/proto/player/v1"
 	"reward-platform/pkg/domain"
@@ -80,7 +81,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer conn.Close()
-	playerBalance := grpcclient.New(playerv1.NewPlayerLedgerClient(conn))
+
+	// Decorator chain, outermost first: CircuitBreaker wraps Retrying
+	// wraps the raw gRPC client. See resilience's package doc comment
+	// for why that order (not the reverse) is what makes the breaker's
+	// failure count mean "calls," not "attempts."
+	rawPlayerBalance := grpcclient.New(playerv1.NewPlayerLedgerClient(conn))
+	retryingPlayerBalance := resilience.NewRetrying(rawPlayerBalance)
+	playerBalance := resilience.NewCircuitBreaker(retryingPlayerBalance)
 
 	sqsClient, err := mq.NewClient(startupCtx, sqsEndpoint)
 	if err != nil {

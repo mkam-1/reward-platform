@@ -6,6 +6,8 @@ engineer (microservices, AWS, Kubernetes, Terraform, SQL + NoSQL, testing,
 CI/CD). The full curriculum lives in [docs/curriculum.md](docs/curriculum.md).
 
 Domain: players earn points by playing games, and redeem points for rewards.
+Real architectural decisions along the way are recorded as ADRs in
+[docs/adr/](docs/adr/).
 
 ## Phase tracker
 
@@ -18,7 +20,7 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 4 | Relational DB (Postgres) | ✅ done |
 | 5 | NoSQL DB (DynamoDB) | ✅ done |
 | 6 | Split into microservices | ✅ done |
-| 7 | Architecture & patterns | ⬜ not started |
+| 7 | Architecture & patterns | ✅ done |
 | 8 | Testing depth | ⬜ not started |
 | 9 | Observability | ⬜ not started |
 | 10 | Containers & Kubernetes | ⬜ not started |
