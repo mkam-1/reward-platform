@@ -20,7 +20,7 @@ import (
 func newTestHandler() http.Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	playerLedger := ledger.New(domain.SystemClock{}, domain.NewMemoryPlayerRepository(), domain.NewMemoryLedgerRepository())
-	return NewHandler(playerLedger, logger)
+	return NewHandler(playerLedger, logger, nil)
 }
 
 // doRequest round-trips a request through the handler and decodes the

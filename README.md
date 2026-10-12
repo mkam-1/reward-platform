@@ -22,8 +22,8 @@ Real architectural decisions along the way are recorded as ADRs in
 | 6 | Split into microservices | ✅ done |
 | 7 | Architecture & patterns | ✅ done |
 | 8 | Testing depth | ✅ done |
-| 9 | Observability | ⬜ not started |
-| 10 | Containers & Kubernetes | ⬜ not started |
+| 9 | Observability | ✅ done |
+| 10 | Containers & Kubernetes | ✅ done |
 | 11 | AWS deployment (ECS/DynamoDB/CloudWatch) | ⬜ not started |
 | 12 | IaC (Terraform/Terragrunt) | ⬜ not started |
 | 13 | CI/CD | ⬜ not started |
@@ -229,6 +229,47 @@ Docker Desktop's WSL integration exposes (already set permanently in
 ```
 export DOCKER_HOST=unix:///mnt/wsl/docker-desktop-bind-mounts/Ubuntu/docker.sock
 ```
+
+## Observability (phase 9)
+
+Each service now exposes, alongside `/healthz` (liveness: is the process
+up): `/readyz` (readiness: can it reach its real dependency — Postgres
+for player-service, DynamoDB for rewards-service, nothing for
+game-service which has none) and `/metrics` (Prometheus text format:
+`http_requests_total` and `http_request_duration_seconds`, both labeled
+by method/path/status).
+
+```
+curl -s http://localhost:8080/readyz
+curl -s http://localhost:8080/metrics
+```
+
+## Kubernetes (phase 10)
+
+`infra/k8s/` has plain manifests (no Helm) for the full six-container
+stack — Postgres, DynamoDB Local, ElasticMQ, and the three services,
+each with liveness/readiness probes wired to `/healthz`/`/readyz` and an
+HPA scaling on CPU. Intended for a local cluster (kind/minikube), not a
+real one — `imagePullPolicy: IfNotPresent` and `image:
+reward-platform/<service>:latest` assume images already sit in the
+cluster's own image store.
+
+```
+# Build the three service images, then load them into the cluster
+# (kind) or point your shell at the cluster's own Docker daemon first
+# (minikube docker-env) and build there instead.
+docker build -t reward-platform/player-service:latest -f services/player-service/Dockerfile .
+docker build -t reward-platform/game-service:latest -f services/game-service/Dockerfile .
+docker build -t reward-platform/rewards-service:latest -f services/rewards-service/Dockerfile .
+kind load docker-image reward-platform/player-service:latest reward-platform/game-service:latest reward-platform/rewards-service:latest
+
+kubectl apply -k infra/k8s
+kubectl -n reward-platform get pods -w
+```
+
+(Manifests are validated with `python3 -c "import yaml; ..."` in this
+environment — no local kind/minikube cluster was stood up to `apply`
+against, given the time constraint this session is under.)
 
 ### If you're on native Windows instead
 

@@ -51,7 +51,7 @@ func main() {
 	logger.Info("sqs queue ready", "queue", queueName, "url", queueURL)
 
 	gameCatalog := catalog.New(domain.SystemClock{}, domain.NewStore[domain.Game](), sqsClient, queueURL)
-	handler := api.NewHandler(gameCatalog, logger)
+	handler := api.NewHandler(gameCatalog, logger, nil)
 
 	srv := &http.Server{
 		Addr:         ":" + port,

@@ -1,0 +1,64 @@
+# ElasticMQ, same free SQS emulator used in docker-compose. The config
+# file content is identical to deploy/elasticmq.conf — kept as its own
+# ConfigMap here since k8s has no bind-mount equivalent, only volumes
+# backed by a ConfigMap/Secret/PVC.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elasticmq-config
+  namespace: reward-platform
+data:
+  elasticmq.conf: |
+    include classpath("application.conf")
+    node-address {
+        protocol = http
+        host = "sqs"
+        port = 9324
+        context-path = ""
+    }
+    rest-sqs {
+        enabled = true
+        bind-port = 9324
+        bind-hostname = "0.0.0.0"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sqs
+  namespace: reward-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqs
+  template:
+    metadata:
+      labels:
+        app: sqs
+    spec:
+      containers:
+        - name: sqs
+          image: softwaremill/elasticmq-native:latest
+          ports:
+            - containerPort: 9324
+          volumeMounts:
+            - name: config
+              mountPath: /opt/elasticmq.conf
+              subPath: elasticmq.conf
+      volumes:
+        - name: config
+          configMap:
+            name: elasticmq-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqs
+  namespace: reward-platform
+spec:
+  selector:
+    app: sqs
+  ports:
+    - port: 9324
+      targetPort: 9324

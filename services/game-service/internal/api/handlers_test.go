@@ -33,7 +33,7 @@ func (p *fakePublisher) Publish(_ context.Context, _ string, body string) error 
 func newTestHandler(pub *fakePublisher) http.Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gameCatalog := catalog.New(domain.SystemClock{}, domain.NewStore[domain.Game](), pub, "test-queue-url")
-	return NewHandler(gameCatalog, logger)
+	return NewHandler(gameCatalog, logger, nil)
 }
 
 func doRequest[T any](t *testing.T, h http.Handler, method, path string, body any, headers ...[2]string) (*httptest.ResponseRecorder, T) {

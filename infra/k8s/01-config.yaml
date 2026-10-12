@@ -1,0 +1,32 @@
+# Non-secret config shared by the three Go services — mirrors
+# deploy/.env.example. Real secrets (DB password, AWS keys) live in the
+# Secret below instead; in a real cluster the Secret would come from
+# something like External Secrets Operator pulling from AWS Secrets
+# Manager, not a checked-in manifest.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reward-platform-config
+  namespace: reward-platform
+data:
+  AWS_REGION: "us-east-1"
+  POSTGRES_DB: "reward_platform"
+  DATABASE_URL: "postgres://reward:reward@postgres:5432/reward_platform?sslmode=disable"
+  SQS_ENDPOINT: "http://sqs:9324"
+  SESSION_COMPLETED_QUEUE: "session-completed"
+  POINTS_AWARDED_QUEUE: "points-awarded"
+  DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+  DYNAMODB_TABLE: "reward_platform"
+  PLAYER_SERVICE_GRPC_ADDR: "player-service:9090"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: reward-platform-secrets
+  namespace: reward-platform
+type: Opaque
+stringData:
+  POSTGRES_USER: "reward"
+  POSTGRES_PASSWORD: "reward"
+  AWS_ACCESS_KEY_ID: "local"
+  AWS_SECRET_ACCESS_KEY: "local"

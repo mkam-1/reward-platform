@@ -105,6 +105,7 @@ func recoveryMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 // the *final* outcome, including requests that panicked and got turned
 // into a 500 by the layer underneath it.
 func withMiddleware(h http.Handler, logger *slog.Logger) http.Handler {
+	h = metricsMiddleware(h)
 	h = recoveryMiddleware(logger)(h)
 	h = loggingMiddleware(logger)(h)
 	h = requestIDMiddleware(h)

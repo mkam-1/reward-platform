@@ -42,7 +42,7 @@ func (f *fakePlayerBalance) DebitPoints(_ context.Context, playerID string, amou
 func newTestHandler(balances map[string]int) http.Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	rewardCatalog := catalog.New(domain.SystemClock{}, domain.NewMemoryRewardRepository(), domain.NewMemoryRedemptionRepository(), &fakePlayerBalance{balances: balances})
-	return NewHandler(rewardCatalog, logger)
+	return NewHandler(rewardCatalog, logger, nil)
 }
 
 func doRequest[T any](t *testing.T, h http.Handler, method, path string, body any, headers ...[2]string) (*httptest.ResponseRecorder, T) {

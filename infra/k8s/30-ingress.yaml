@@ -1,0 +1,38 @@
+# Requires an ingress controller in the cluster (e.g. `minikube addons
+# enable ingress`, or kind + ingress-nginx). Path-based routing to each
+# service's HTTP port — gRPC (player-service:9090) isn't exposed here,
+# since it's only ever called service-to-service inside the cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: reward-platform
+  namespace: reward-platform
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: reward-platform.local
+      http:
+        paths:
+          - path: /players(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: player-service
+                port:
+                  number: 8080
+          - path: /games(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: game-service
+                port:
+                  number: 8080
+          - path: /rewards(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rewards-service
+                port:
+                  number: 8080

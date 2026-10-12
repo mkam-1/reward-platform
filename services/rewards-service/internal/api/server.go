@@ -2,17 +2,20 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"reward-platform/services/rewards-service/internal/catalog"
 )
 
-func NewHandler(rewardCatalog *catalog.RewardCatalog, logger *slog.Logger) http.Handler {
-	a := &api{catalog: rewardCatalog, logger: logger}
+func NewHandler(rewardCatalog *catalog.RewardCatalog, logger *slog.Logger, ready func(context.Context) error) http.Handler {
+	a := &api{catalog: rewardCatalog, logger: logger, ready: ready}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.handleHealthz)
+	mux.HandleFunc("GET /readyz", a.handleReadyz)
+	mux.Handle("GET /metrics", metricsHandler())
 
 	mux.HandleFunc("POST /rewards", a.handleCreateReward)
 	mux.HandleFunc("GET /rewards", a.handleListRewards)

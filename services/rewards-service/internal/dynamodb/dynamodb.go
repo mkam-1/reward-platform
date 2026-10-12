@@ -57,6 +57,15 @@ func NewClient(ctx context.Context, endpoint, table string) (*Client, error) {
 	return &Client{db: db, table: table}, nil
 }
 
+// Ping checks DynamoDB is reachable and the table exists — used as the
+// dependency check behind /readyz.
+func (c *Client) Ping(ctx context.Context) error {
+	_, err := c.db.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(c.table),
+	})
+	return err
+}
+
 // EnsureTable creates the table (with its one GSI) if it doesn't already
 // exist. Convenient for local development and DynamoDB Local; real AWS
 // (phase 11) provisions this with Terraform instead, the same way phase

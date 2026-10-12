@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -10,10 +11,23 @@ import (
 type api struct {
 	catalog *catalog.GameCatalog
 	logger  *slog.Logger
+	ready   func(context.Context) error
 }
 
 func (a *api) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (a *api) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if a.ready == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+		return
+	}
+	if err := a.ready(r.Context()); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (a *api) handleCreateGame(w http.ResponseWriter, r *http.Request) {

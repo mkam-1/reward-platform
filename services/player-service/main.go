@@ -136,7 +136,7 @@ func main() {
 	}()
 
 	// HTTP server: end users.
-	handler := api.NewHandler(playerLedger, logger)
+	handler := api.NewHandler(playerLedger, logger, db.PingContext)
 	httpServer := &http.Server{
 		Addr:         ":" + httpPort,
 		Handler:      handler,

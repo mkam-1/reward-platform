@@ -7,6 +7,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -18,12 +19,19 @@ import (
 // HTTP endpoints here, but now happen via SQS (a SessionCompleted event
 // from game-service) and gRPC (a DebitPoints call from rewards-service)
 // respectively, not direct HTTP calls from an end user.
-func NewHandler(playerLedger *ledger.PlayerLedger, logger *slog.Logger) http.Handler {
-	a := &api{ledger: playerLedger, logger: logger}
+//
+// ready is called for GET /readyz — distinct from /healthz ("is the
+// process alive") in that it checks an actual dependency (here: can we
+// reach Postgres), the signal a Kubernetes readiness probe or an ALB
+// health check needs to decide whether to route traffic here at all.
+func NewHandler(playerLedger *ledger.PlayerLedger, logger *slog.Logger, ready func(context.Context) error) http.Handler {
+	a := &api{ledger: playerLedger, logger: logger, ready: ready}
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", a.handleHealthz)
+	mux.HandleFunc("GET /readyz", a.handleReadyz)
+	mux.Handle("GET /metrics", metricsHandler())
 
 	mux.HandleFunc("POST /players", a.handleCreatePlayer)
 	mux.HandleFunc("GET /players", a.handleListPlayers)

@@ -107,7 +107,7 @@ func main() {
 		dynamodb.NewRedemptionRepository(dynamoClient),
 		playerBalance,
 	)
-	handler := api.NewHandler(rewardCatalog, logger)
+	handler := api.NewHandler(rewardCatalog, logger, dynamoClient.Ping)
 
 	srv := &http.Server{
 		Addr:         ":" + port,
