@@ -16,8 +16,7 @@ linters:
   settings:
     revive:
       rules:
-        # This project's deliberate convention (see CLAUDE.md / system
-        # instructions it's developed under): no comment on an exported
+        # This project's deliberate convention: no comment on an exported
         # symbol unless there's a non-obvious WHY to explain — a comment
         # that just restates a well-named function's signature is noise,
         # not documentation. revive's default "exported" rule demands a
