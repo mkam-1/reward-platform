@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	// Side-effect import: registers the "pgx" driver with database/sql.
 	// We deliberately use the standard database/sql API (sql.Open,
@@ -28,11 +29,26 @@ import (
 // Open connects to Postgres and verifies the connection with a Ping —
 // failing fast here with a clear error beats discovering a bad
 // connection string on the first real request.
+//
+// database/sql's pool defaults to an *unbounded* number of open
+// connections — fine for one process talking to one local Postgres,
+// but a real bug waiting to happen once this runs as N horizontally
+// scaled replicas (ECS desired_count, a k8s HPA): N replicas each
+// opening connections without limit can collectively exceed Postgres'
+// own max_connections (100 by default on RDS db.t3.micro), taking the
+// database down for every replica at once instead of just slowing one
+// down. SetMaxOpenConns caps this service's own share of that budget;
+// SetConnMaxLifetime recycles connections periodically so a failover
+// or a load balancer in front of Postgres (RDS Proxy, pgbouncer) is
+// picked up without a restart.
 func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(20)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close() // best-effort: we're already returning the ping error, a close error wouldn't add information
 		return nil, fmt.Errorf("ping postgres: %w", err)

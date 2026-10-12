@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // PlayerRepository persists Players. Two implementations exist: an
 // in-memory one (memory_player_repo.go, used by tests and cmd/rewardctl)
@@ -12,7 +15,34 @@ import "context"
 type PlayerRepository interface {
 	Put(ctx context.Context, p Player) error
 	Get(ctx context.Context, id string) (Player, error)
+	// List returns every player, unbounded — fine for cmd/rewardctl's
+	// local demo/simulate commands (the only thing that still calls
+	// this), which only ever run against a small in-memory dataset.
+	// Never call this from a path that could run against a production
+	// Postgres table with a real number of rows — see ListPage.
 	List(ctx context.Context) ([]Player, error)
+	// ListPage is the production-safe alternative List should have
+	// always had: keyset pagination (ordered by CreatedAt, then ID as a
+	// tiebreaker for players created in the same instant), capped at
+	// limit, resuming after the given cursor. player-service's HTTP
+	// handler for GET /players uses this, not List — the version of
+	// that endpoint that called List ran one unbounded `SELECT *` that
+	// would try to load and JSON-encode the *entire* players table on
+	// every single call, which is fine at a few hundred test rows and
+	// fails outright (OOM, multi-minute response, or both) the moment
+	// the table holds anywhere near "millions of users."
+	ListPage(ctx context.Context, limit int, after *PlayerPageCursor) ([]Player, error)
+}
+
+// PlayerPageCursor is "resume listing after this player" — the (time,
+// id) pair ListPage's keyset pagination needs. CreatedAt alone isn't
+// unique enough to resume from (two players can register in the same
+// instant); ID alone isn't ordered (IDGenerator mints random IDs, not
+// sequential ones — see id.go's doc comment for why). Together they're
+// both unique and ordered.
+type PlayerPageCursor struct {
+	CreatedAt time.Time
+	ID        string
 }
 
 // LedgerRepository persists the points ledger and answers balance
@@ -69,6 +99,12 @@ type RewardRepository interface {
 // for an idempotent write, not a failure.
 type RedemptionRepository interface {
 	Create(ctx context.Context, r Redemption) (created bool, err error)
-	Get(ctx context.Context, id string) (Redemption, error)
+	// Get takes rewardID alongside id because the DynamoDB-backed
+	// implementation's primary key is (PK=REWARD#<rewardID>,
+	// SK=REDEMPTION#<id>) — every caller already has rewardID in hand
+	// (it's a parameter to RedeemReward from the start), so taking it
+	// here turns what would otherwise be a full table Scan into a
+	// direct, O(1) GetItem.
+	Get(ctx context.Context, rewardID, id string) (Redemption, error)
 	ListByPlayer(ctx context.Context, playerID string) ([]Redemption, error)
 }

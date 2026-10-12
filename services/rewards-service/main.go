@@ -94,7 +94,33 @@ func main() {
 	// first RPC. insecure.NewCredentials() means plaintext — fine inside
 	// one AWS VPC's private network (phase 11), not something to carry
 	// over a public network unchanged.
-	conn, err := grpc.NewClient(playerServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	//
+	// WithDefaultServiceConfig's round_robin policy matters once
+	// player-service has more than one replica (its own HPA/Application
+	// Auto Scaling target can take it well past one — see infra/k8s and
+	// infra/terraform/ecs.tf): without it, gRPC's default "pick_first"
+	// balancer sends every single RPC from this process to whichever one
+	// replica its name resolution happened to return first, for the
+	// entire life of this connection — the other replicas sit idle while
+	// that one absorbs 100% of the traffic.
+	//
+	// round_robin only has multiple addresses to balance across because
+	// of the "dns:///" prefix: without a scheme, grpc-go defaults to the
+	// "passthrough" resolver, which treats playerServiceAddr as one
+	// single, never-re-resolved address — exactly as unbalanced as
+	// pick_first, just for a different reason. The "dns:///" resolver
+	// actually queries DNS and gets back every address that name
+	// currently has — in AWS, every task Cloud Map has registered under
+	// PLAYER_SERVICE_GRPC_ADDR's hostname (ecs.tf's
+	// aws_service_discovery_service); on a bare k8s ClusterIP Service
+	// this degenerates back to one address, since kube-proxy already
+	// load-balances at that layer — round_robin only earns its keep
+	// against Cloud Map's flat DNS, not a ClusterIP.
+	conn, err := grpc.NewClient(
+		"dns:///"+playerServiceAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig": [{"round_robin":{}}]}`),
+	)
 	if err != nil {
 		logger.Error("failed to build player-service grpc client", "error", err)
 		os.Exit(1)

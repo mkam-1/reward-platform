@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"reward-platform/services/player-service/internal/ledger"
 )
@@ -49,15 +50,40 @@ func (a *api) handleCreatePlayer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toPlayerResponse(player))
 }
 
+// handleListPlayers is paginated (limit + an opaque cursor), not the
+// "give me everything" endpoint it used to be — see
+// domain.PlayerRepository.ListPage's doc comment for why an unbounded
+// list here is a real production bug, not a style preference, once the
+// players table holds anywhere near "millions of users."
 func (a *api) handleListPlayers(w http.ResponseWriter, r *http.Request) {
-	players, err := a.ledger.Players(r.Context())
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
+			return
+		}
+		limit = parsed
+	}
+
+	cursor, err := decodeCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	players, err := a.ledger.PlayersPage(r.Context(), limit, cursor)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
 	}
-	out := make([]playerResponse, len(players))
+
+	out := playersPageResponse{Players: make([]playerResponse, len(players))}
 	for i, p := range players {
-		out[i] = toPlayerResponse(p)
+		out.Players[i] = toPlayerResponse(p)
+	}
+	if len(players) > 0 {
+		out.NextCursor = encodeCursor(players[len(players)-1])
 	}
 	writeJSON(w, http.StatusOK, out)
 }

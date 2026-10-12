@@ -30,7 +30,7 @@ func (r *memoryRedemptionRepository) Create(_ context.Context, redemption Redemp
 	return true, nil
 }
 
-func (r *memoryRedemptionRepository) Get(_ context.Context, id string) (Redemption, error) {
+func (r *memoryRedemptionRepository) Get(_ context.Context, _ /* rewardID */, id string) (Redemption, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

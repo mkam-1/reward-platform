@@ -36,3 +36,13 @@ type balanceResponse struct {
 	PlayerID string `json:"playerId"`
 	Balance  int    `json:"balance"`
 }
+
+// playersPageResponse is GET /players' shape: a page of results plus an
+// opaque cursor for the next one, empty once there's nothing left —
+// the standard keyset-pagination response shape, deliberately not
+// exposing offsets or total counts (both of which an unbounded COUNT(*)
+// would cost almost as much as the query being paginated to avoid).
+type playersPageResponse struct {
+	Players    []playerResponse `json:"players"`
+	NextCursor string           `json:"nextCursor,omitempty"`
+}

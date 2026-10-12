@@ -38,6 +38,20 @@ type Publisher interface {
 // the player-facing request that triggered it — CreditPoints already
 // committed; the event just waits in the table until this loop's next
 // tick succeeds.
+//
+// Known gap at scale: main.go starts one of these per player-service
+// *process*, and horizontal scaling means several processes running
+// at once, each independently polling the same outbox_events table.
+// Two replicas' ticks landing in the same window can both select and
+// publish the same still-unpublished row — safe (PointsAwarded
+// consumers are idempotent) but wasteful, multiplying SQS publish
+// calls roughly by replica count. The real fix is `SELECT ... FOR
+// UPDATE SKIP LOCKED` so concurrent relays claim disjoint rows, paired
+// with a separate `claimed_at` column (distinct from `published_at`)
+// so a replica that claims a row and then crashes before publishing
+// doesn't strand it forever — that's a schema migration, not a
+// same-session fix, so it's called out here rather than attempted
+// half-done.
 type Relay struct {
 	store     Store
 	publisher Publisher

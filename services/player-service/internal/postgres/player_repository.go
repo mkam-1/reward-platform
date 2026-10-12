@@ -74,3 +74,44 @@ func (r *PlayerRepository) List(ctx context.Context) ([]domain.Player, error) {
 	}
 	return players, nil
 }
+
+// ListPage is keyset pagination: `WHERE (created_at, id) > (cursor)` is
+// a single indexed range scan returning exactly `limit` rows, unlike
+// List's unbounded `SELECT *` or OFFSET-based paging (which still has
+// to walk and discard every row before the offset — just as expensive
+// as no pagination at all once that offset is a few hundred thousand
+// rows in). idx_players_created_at_id (see migrations) is what makes
+// this a cheap index scan rather than a sort over the whole table.
+func (r *PlayerRepository) ListPage(ctx context.Context, limit int, after *domain.PlayerPageCursor) ([]domain.Player, error) {
+	var rows *sql.Rows
+	var err error
+	if after == nil {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT id, username, created_at FROM players
+			ORDER BY created_at, id
+			LIMIT $1`, limit)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `
+			SELECT id, username, created_at FROM players
+			WHERE (created_at, id) > ($1, $2)
+			ORDER BY created_at, id
+			LIMIT $3`, after.CreatedAt, after.ID, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list players page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	players := make([]domain.Player, 0, limit)
+	for rows.Next() {
+		var p domain.Player
+		if err := rows.Scan(&p.ID, &p.Username, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("list players page: scan: %w", err)
+		}
+		players = append(players, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list players page: %w", err)
+	}
+	return players, nil
+}

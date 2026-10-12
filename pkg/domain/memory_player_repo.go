@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"sort"
+)
 
 // memoryPlayerRepository adapts the generic Store[Player] to the
 // PlayerRepository interface's shape: Put takes the whole Player, not a
@@ -28,4 +31,34 @@ func (r *memoryPlayerRepository) Get(ctx context.Context, id string) (Player, er
 
 func (r *memoryPlayerRepository) List(ctx context.Context) ([]Player, error) {
 	return r.store.List(ctx), nil
+}
+
+func (r *memoryPlayerRepository) ListPage(ctx context.Context, limit int, after *PlayerPageCursor) ([]Player, error) {
+	all, _ := r.List(ctx)
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].ID < all[j].ID
+		}
+		return all[i].CreatedAt.Before(all[j].CreatedAt)
+	})
+
+	start := 0
+	if after != nil {
+		for i, p := range all {
+			if p.CreatedAt.After(after.CreatedAt) || (p.CreatedAt.Equal(after.CreatedAt) && p.ID > after.ID) {
+				start = i
+				break
+			}
+			start = i + 1
+		}
+	}
+
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	if start >= len(all) {
+		return []Player{}, nil
+	}
+	return all[start:end], nil
 }

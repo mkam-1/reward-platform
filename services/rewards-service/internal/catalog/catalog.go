@@ -118,7 +118,7 @@ func (c *RewardCatalog) RedeemReward(ctx context.Context, playerID, rewardID, id
 		idempotencyKey = c.ids.Next("redemption")
 	}
 
-	if existing, err := c.redemptions.Get(ctx, idempotencyKey); err == nil {
+	if existing, err := c.redemptions.Get(ctx, rewardID, idempotencyKey); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, domain.ErrNotFound) {
 		return domain.Redemption{}, fmt.Errorf("redeem: idempotency check: %w", err)
@@ -152,7 +152,7 @@ func (c *RewardCatalog) RedeemReward(ctx context.Context, playerID, rewardID, id
 		return domain.Redemption{}, fmt.Errorf("redeem: %w", err)
 	}
 	if !created {
-		existing, err := c.redemptions.Get(ctx, idempotencyKey)
+		existing, err := c.redemptions.Get(ctx, rewardID, idempotencyKey)
 		if err != nil {
 			return domain.Redemption{}, fmt.Errorf("redeem: idempotent replay: %w", err)
 		}

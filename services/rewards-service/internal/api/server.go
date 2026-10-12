@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"golang.org/x/time/rate"
 
@@ -14,6 +15,10 @@ import (
 func NewHandler(rewardCatalog *catalog.RewardCatalog, logger *slog.Logger, ready func(context.Context) error) http.Handler {
 	a := &api{catalog: rewardCatalog, logger: logger, ready: ready}
 	redeemLimiter := newPerIPLimiter(rate.Limit(5), 10) // 5 req/s sustained, burst of 10
+	// Lives for the process's lifetime, same as redeemLimiter itself —
+	// NewHandler only ever runs once at startup, so there's no separate
+	// shutdown path to wire this to; it exits when the process does.
+	go redeemLimiter.sweep(context.Background(), time.Minute, 10*time.Minute)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.handleHealthz)

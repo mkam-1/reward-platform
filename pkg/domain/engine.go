@@ -236,7 +236,7 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID, idempoten
 		idempotencyKey = e.ids.Next("redemption")
 	}
 
-	if existing, err := e.redemptions.Get(ctx, idempotencyKey); err == nil {
+	if existing, err := e.redemptions.Get(ctx, rewardID, idempotencyKey); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, ErrNotFound) {
 		return Redemption{}, fmt.Errorf("redeem: idempotency check: %w", err)
@@ -284,7 +284,7 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID, idempoten
 		// Lost a race with a concurrent call using this same new key —
 		// rare, but handled the same way as the fast-path replay above:
 		// fetch and return whatever the other call wrote.
-		existing, err := e.redemptions.Get(ctx, idempotencyKey)
+		existing, err := e.redemptions.Get(ctx, rewardID, idempotencyKey)
 		if err != nil {
 			return Redemption{}, fmt.Errorf("redeem: idempotent replay: %w", err)
 		}

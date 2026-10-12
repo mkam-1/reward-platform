@@ -98,30 +98,30 @@ func (r *RedemptionRepository) Create(ctx context.Context, redemption domain.Red
 	return true, nil
 }
 
-// Get needs the reward ID to form the primary key (PK=REWARD#<rewardID>,
-// SK=REDEMPTION#<id>), but the domain.RedemptionRepository interface
-// only gives us the redemption ID — so this queries GSI1 by scanning for
-// a matching SK instead of a direct GetItem. Acceptable at this scale;
-// a table with a huge redemption history would want the redemption ID
-// alone to be enough, which would mean reshaping this table's keys.
-func (r *RedemptionRepository) Get(ctx context.Context, id string) (domain.Redemption, error) {
-	out, err := r.client.db.Scan(ctx, &dynamodb.ScanInput{
-		TableName:        aws.String(r.client.table),
-		FilterExpression: aws.String("EntityType = :t AND ID = :id"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":t":  &types.AttributeValueMemberS{Value: "Redemption"},
-			":id": &types.AttributeValueMemberS{Value: id},
+// Get is a direct GetItem keyed by (PK=REWARD#<rewardID>,
+// SK=REDEMPTION#<id>) — the domain.RedemptionRepository interface takes
+// rewardID precisely so this can be O(1) instead of scanning the whole
+// table (which it used to do, and which RedeemReward calls on every
+// single redemption attempt as its idempotency check — a full Scan on
+// that hot path would have meant every redemption paying for a full
+// table read, scaling to zero at any real traffic volume).
+func (r *RedemptionRepository) Get(ctx context.Context, rewardID, id string) (domain.Redemption, error) {
+	out, err := r.client.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.client.table),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: rewardKey(rewardID)},
+			"SK": &types.AttributeValueMemberS{Value: redemptionKey(id)},
 		},
 	})
 	if err != nil {
 		return domain.Redemption{}, fmt.Errorf("get redemption: %w", err)
 	}
-	if len(out.Items) == 0 {
+	if out.Item == nil {
 		return domain.Redemption{}, fmt.Errorf("id %q: %w", id, domain.ErrNotFound)
 	}
 
 	var item redemptionItem
-	if err := attributevalue.UnmarshalMap(out.Items[0], &item); err != nil {
+	if err := attributevalue.UnmarshalMap(out.Item, &item); err != nil {
 		return domain.Redemption{}, fmt.Errorf("get redemption: unmarshal: %w", err)
 	}
 	return item.toDomain()

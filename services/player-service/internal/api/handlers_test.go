@@ -112,12 +112,50 @@ func TestListPlayers(t *testing.T) {
 	doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
 	doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "bob"})
 
-	rec, list := doRequest[[]playerResponse](t, h, http.MethodGet, "/players", nil)
+	rec, page := doRequest[playersPageResponse](t, h, http.MethodGet, "/players", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if len(list) != 2 {
-		t.Fatalf("len(list) = %d, want 2", len(list))
+	if len(page.Players) != 2 {
+		t.Fatalf("len(page.Players) = %d, want 2", len(page.Players))
+	}
+}
+
+func TestListPlayersPagination(t *testing.T) {
+	h := newTestHandler()
+
+	for _, username := range []string{"alice", "bob", "carol"} {
+		doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: username})
+	}
+
+	rec, firstPage := doRequest[playersPageResponse](t, h, http.MethodGet, "/players?limit=2", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(firstPage.Players) != 2 {
+		t.Fatalf("len(firstPage.Players) = %d, want 2", len(firstPage.Players))
+	}
+	if firstPage.NextCursor == "" {
+		t.Fatal("expected a non-empty NextCursor when more players remain")
+	}
+
+	rec, secondPage := doRequest[playersPageResponse](t, h, http.MethodGet, "/players?limit=2&cursor="+firstPage.NextCursor, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(secondPage.Players) != 1 {
+		t.Fatalf("len(secondPage.Players) = %d, want 1", len(secondPage.Players))
+	}
+
+	seen := map[string]bool{}
+	for _, p := range append(firstPage.Players, secondPage.Players...) {
+		if seen[p.ID] {
+			t.Fatalf("player %q returned twice across pages", p.ID)
+		}
+		seen[p.ID] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("saw %d distinct players across both pages, want 3", len(seen))
 	}
 }
 

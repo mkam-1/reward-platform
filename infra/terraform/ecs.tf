@@ -122,8 +122,17 @@ resource "aws_ecs_service" "services" {
   name            = each.key
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.services[each.key].arn
-  desired_count   = 1 # single instance per service — cost control, not an HA claim
+  desired_count   = 1 # the autoscaling target below can scale this up under load; Terraform shouldn't fight it back down on every apply
   launch_type     = "FARGATE"
+
+  # Without this, every `terraform apply` resets desired_count back to
+  # the literal 1 above, undoing whatever aws_appautoscaling_policy
+  # decided in response to real load since the last apply — Terraform
+  # owns the *floor* (what this starts at / falls back to), Application
+  # Auto Scaling owns the actual value day to day.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids
@@ -145,4 +154,40 @@ resource "aws_ecs_service" "services" {
   }
 
   depends_on = [aws_lb_listener.http]
+}
+
+# Application Auto Scaling — ECS's equivalent of the HPA each service
+# already has in infra/k8s/*.yaml (Phase 10). Floor of 1 keeps ADR-0008's
+# cost reasoning (no permanent fleet of idle tasks on a free-tier
+# account); ceiling of 10 is a deliberately generous cap for real
+# traffic spikes, not a claim this setup is tuned for "millions of
+# users" on its own — see the review notes on Postgres/DynamoDB/SQS
+# each needing their own scaling story alongside this one.
+resource "aws_appautoscaling_target" "services" {
+  for_each = local.services
+
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.services[each.key].name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = 1
+  max_capacity       = 10
+}
+
+resource "aws_appautoscaling_policy" "services_cpu" {
+  for_each = local.services
+
+  name               = "reward-platform-${each.key}-cpu"
+  service_namespace  = aws_appautoscaling_target.services[each.key].service_namespace
+  resource_id        = aws_appautoscaling_target.services[each.key].resource_id
+  scalable_dimension = aws_appautoscaling_target.services[each.key].scalable_dimension
+  policy_type        = "TargetTrackingScaling"
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value       = 70
+    scale_in_cooldown  = 60
+    scale_out_cooldown = 60
+  }
 }

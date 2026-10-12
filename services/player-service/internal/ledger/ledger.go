@@ -87,6 +87,31 @@ func (l *PlayerLedger) Players(ctx context.Context) ([]domain.Player, error) {
 	return players, nil
 }
 
+// PlayersPage is the paginated, production-safe way to list players —
+// see domain.PlayerRepository.ListPage's doc comment for why Players
+// above (an unbounded List) isn't safe to expose over HTTP at any real
+// scale. limit is clamped to a sane range here rather than trusted
+// from the caller: an API consumer passing limit=0 or a huge number
+// shouldn't be able to turn "paginated" back into "unbounded" by
+// accident or on purpose.
+func (l *PlayerLedger) PlayersPage(ctx context.Context, limit int, after *domain.PlayerPageCursor) ([]domain.Player, error) {
+	const (
+		defaultLimit = 50
+		maxLimit     = 200
+	)
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	players, err := l.players.ListPage(ctx, limit, after)
+	if err != nil {
+		return nil, fmt.Errorf("list players page: %w", err)
+	}
+	return players, nil
+}
+
 func (l *PlayerLedger) Balance(ctx context.Context, playerID string) (int, error) {
 	if _, err := l.players.Get(ctx, playerID); err != nil {
 		return 0, fmt.Errorf("balance: %w", err)
