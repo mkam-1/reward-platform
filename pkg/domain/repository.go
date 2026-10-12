@@ -24,3 +24,28 @@ type LedgerRepository interface {
 	Append(ctx context.Context, entry LedgerEntry) error
 	Balance(ctx context.Context, playerID string) (int, error)
 }
+
+// RewardRepository persists Rewards. DecrementStock is its own method,
+// not "Get, subtract one, Put" from the caller's side, because it has to
+// be atomic: two callers decrementing concurrently must never both see
+// Stock==1 and succeed. The in-memory implementation gets that from a
+// mutex; the DynamoDB-backed one gets it from a conditional UpdateItem —
+// same contract, very different mechanism, which is exactly why this is
+// an interface method and not exposed as separate Get/Put calls.
+type RewardRepository interface {
+	Put(ctx context.Context, r Reward) error
+	Get(ctx context.Context, id string) (Reward, error)
+	List(ctx context.Context) ([]Reward, error)
+	DecrementStock(ctx context.Context, id string) error
+}
+
+// RedemptionRepository persists Redemptions, keyed by their own ID, which
+// doubles as an idempotency key (see Engine.RedeemReward). Create reports
+// created=false instead of returning an error when that ID already
+// exists — "this was already done" is an expected, successful outcome
+// for an idempotent write, not a failure.
+type RedemptionRepository interface {
+	Create(ctx context.Context, r Redemption) (created bool, err error)
+	Get(ctx context.Context, id string) (Redemption, error)
+	ListByPlayer(ctx context.Context, playerID string) ([]Redemption, error)
+}

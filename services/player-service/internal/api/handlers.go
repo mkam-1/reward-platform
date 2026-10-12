@@ -89,12 +89,33 @@ func (a *api) handleRedeemReward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redemption, err := a.engine.RedeemReward(r.Context(), r.PathValue("id"), req.RewardID)
+	// A client that times out waiting for a response and retries should
+	// send the same Idempotency-Key both times — that's what lets
+	// Engine.RedeemReward recognize the retry and return the original
+	// result instead of redeeming twice. If the header's absent, Engine
+	// generates a key itself, which is fine for a one-shot call but gives
+	// up retry-safety.
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+
+	redemption, err := a.engine.RedeemReward(r.Context(), r.PathValue("id"), req.RewardID, idempotencyKey)
 	if err != nil {
 		writeError(w, statusFor(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, toRedemptionResponse(redemption))
+}
+
+func (a *api) handleListRedemptions(w http.ResponseWriter, r *http.Request) {
+	redemptions, err := a.engine.ListRedemptions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
+	out := make([]redemptionResponse, len(redemptions))
+	for i, red := range redemptions {
+		out[i] = toRedemptionResponse(red)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *api) handleCreateGame(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +158,11 @@ func (a *api) handleCreateReward(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) handleListRewards(w http.ResponseWriter, r *http.Request) {
-	rewards := a.engine.Rewards(r.Context())
+	rewards, err := a.engine.Rewards(r.Context())
+	if err != nil {
+		writeError(w, statusFor(err), err.Error())
+		return
+	}
 	out := make([]rewardResponse, len(rewards))
 	for i, rw := range rewards {
 		out[i] = toRewardResponse(rw)

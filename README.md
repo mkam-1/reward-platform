@@ -16,7 +16,7 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 2 | Concurrency (event processor) | ✅ done |
 | 3 | First HTTP service (`player-service`) | ✅ done |
 | 4 | Relational DB (Postgres) | ✅ done |
-| 5 | NoSQL DB (DynamoDB) | ⬜ not started |
+| 5 | NoSQL DB (DynamoDB) | ✅ done |
 | 6 | Split into microservices | ⬜ not started |
 | 7 | Architecture & patterns | ⬜ not started |
 | 8 | Testing depth | ⬜ not started |
@@ -64,35 +64,53 @@ go build -o bin/rewardctl ./cmd/rewardctl
 ./bin/rewardctl simulate -players 15 -games 3 -events 300 -workers 8
 ```
 
-### Trying player-service (with real Postgres)
+### Trying player-service (with real Postgres + DynamoDB Local)
 
-player-service requires a real Postgres database — `DATABASE_URL` is a
-required env var, not defaulted, so a missing connection string fails
-loudly on startup instead of silently running in memory. Easiest way to
-run the whole stack (Postgres + player-service) together:
+player-service requires a real Postgres database (players, the ledger)
+and a real DynamoDB table (rewards, redemptions) — `DATABASE_URL` and
+`DYNAMODB_TABLE` are both required env vars, not defaulted, so missing
+config fails loudly on startup instead of silently running in memory.
+
+First time only: copy the env template (real values aren't needed here —
+see "Secrets" below for why):
 
 ```
 cd deploy
-docker compose up --build -d
-docker compose logs player-service   # confirms migrations ran
+cp .env.example .env
 ```
 
-Then, from any terminal:
+Then bring up the whole stack (Postgres + DynamoDB Local + player-service):
+
+```
+docker compose up --build -d
+docker compose logs player-service   # confirms migrations ran + table created
+```
+
+From any terminal:
 
 ```
 curl -s http://localhost:8080/healthz
 curl -s -X POST http://localhost:8080/players -d '{"username":"alice"}'
 curl -s -X POST http://localhost:8080/games -d '{"name":"dice-run","pointsPerSession":15}'
 curl -s -X POST http://localhost:8080/players/player_1/sessions -d '{"gameId":"game_1"}'
+curl -s -X POST http://localhost:8080/rewards -d '{"name":"sticker-pack","costPoints":10,"stock":5}'
+curl -s -X POST http://localhost:8080/players/player_1/redemptions \
+  -H "Idempotency-Key: demo-key-1" -d '{"rewardId":"reward_1"}'
 curl -s http://localhost:8080/players/player_1/balance
+curl -s http://localhost:8080/players/player_1/redemptions
 ```
 
-The actual point of this phase — prove it's really persisted, not just
-in memory:
+Retry that exact `redemptions` POST with the same `Idempotency-Key` and
+confirm the balance doesn't drop a second time — that's the point of
+phase 5's idempotency key, not just its DynamoDB persistence.
+
+Prove persistence survives a restart (now covering rewards/redemptions
+too, not just players/ledger):
 
 ```
 docker compose restart player-service
 curl -s http://localhost:8080/players   # player_1 is still there
+curl -s http://localhost:8080/rewards   # sticker-pack is still there
 ```
 
 Tear down when done:
@@ -101,13 +119,26 @@ Tear down when done:
 docker compose down          # add -v too to also delete the Postgres volume
 ```
 
-### Integration tests (real Postgres via testcontainers)
+### Secrets
+
+`deploy/.env` (gitignored) holds local config docker-compose loads
+automatically — `deploy/.env.example` is the committed template. The
+values in it are throwaway/dummy (a local-only Postgres password, and
+AWS credentials DynamoDB Local doesn't even check but the SDK insists be
+present). This is **not** where a real secret would go in production:
+real AWS API access uses an IAM role attached to the ECS task (Phase 11)
+with no stored credential at all, and an actual secret (a third-party
+API key, say) would go in AWS Secrets Manager/Parameter Store, injected
+into the task at runtime — never a file, never the image, never git.
+
+### Integration tests (real Postgres / DynamoDB Local via testcontainers)
 
 Excluded from the default `go test ./...` run (needs Docker, takes real
 seconds) — run explicitly:
 
 ```
 go test -tags=integration ./services/player-service/internal/postgres/... -v
+go test -tags=integration ./services/player-service/internal/dynamodb/... -v
 ```
 
 Inside WSL, testcontainers needs `DOCKER_HOST` pointed at the socket

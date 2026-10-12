@@ -33,6 +33,7 @@ func NewHandler(engine *domain.Engine, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /players/{id}/balance", a.handleGetBalance)
 	mux.HandleFunc("POST /players/{id}/sessions", a.handleRecordSession)
 	mux.HandleFunc("POST /players/{id}/redemptions", a.handleRedeemReward)
+	mux.HandleFunc("GET /players/{id}/redemptions", a.handleListRedemptions)
 
 	mux.HandleFunc("POST /games", a.handleCreateGame)
 	mux.HandleFunc("GET /games", a.handleListGames)

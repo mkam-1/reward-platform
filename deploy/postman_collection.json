@@ -1,0 +1,283 @@
+{
+  "info": {
+    "_postman_id": "a3f1e2d4-6b7c-4e8f-9a1b-2c3d4e5f6a7b",
+    "name": "reward-platform - player-service",
+    "description": "Exercises player-service end to end: players, games, sessions, rewards, and redemptions (with idempotency). Create requests save their response ID into collection variables (playerId/gameId/rewardId) so later requests can reference {{playerId}} etc. without manual copy-pasting.\n\nSet baseUrl to wherever player-service is listening (default: http://localhost:8080, matching deploy/docker-compose.yml).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "playerId", "value": "", "type": "string" },
+    { "key": "gameId", "value": "", "type": "string" },
+    { "key": "rewardId", "value": "", "type": "string" },
+    { "key": "idempotencyKey", "value": "demo-key-1", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Healthz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Players",
+      "item": [
+        {
+          "name": "Create Player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('playerId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/players",
+              "host": ["{{baseUrl}}"],
+              "path": ["players"]
+            }
+          }
+        },
+        {
+          "name": "List Players",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/players",
+              "host": ["{{baseUrl}}"],
+              "path": ["players"]
+            }
+          }
+        },
+        {
+          "name": "Get Player",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/players/{{playerId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "{{playerId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Balance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/players/{{playerId}}/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "{{playerId}}", "balance"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Games",
+      "item": [
+        {
+          "name": "Create Game",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('gameId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"dice-run\",\n  \"pointsPerSession\": 15\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/games",
+              "host": ["{{baseUrl}}"],
+              "path": ["games"]
+            }
+          }
+        },
+        {
+          "name": "List Games",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games",
+              "host": ["{{baseUrl}}"],
+              "path": ["games"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "Record Session",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gameId\": \"{{gameId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/players/{{playerId}}/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "{{playerId}}", "sessions"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rewards",
+      "item": [
+        {
+          "name": "Create Reward",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('rewardId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"sticker-pack\",\n  \"costPoints\": 10,\n  \"stock\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rewards",
+              "host": ["{{baseUrl}}"],
+              "path": ["rewards"]
+            }
+          }
+        },
+        {
+          "name": "List Rewards",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rewards",
+              "host": ["{{baseUrl}}"],
+              "path": ["rewards"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Redemptions",
+      "item": [
+        {
+          "name": "Redeem Reward (fixed idempotency key)",
+          "description": "Uses the {{idempotencyKey}} collection variable (default: demo-key-1). Send this twice in a row with the same value and confirm the balance only drops once — that's phase 5's idempotency guarantee. Edit the variable (or use the 'new key' request below) to make a genuinely new redemption.",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rewardId\": \"{{rewardId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/players/{{playerId}}/redemptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "{{playerId}}", "redemptions"]
+            }
+          }
+        },
+        {
+          "name": "Redeem Reward (new idempotency key)",
+          "description": "Uses Postman's {{$guid}} dynamic variable so every Send is treated as a genuinely new redemption attempt instead of a replay.",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rewardId\": \"{{rewardId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/players/{{playerId}}/redemptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "{{playerId}}", "redemptions"]
+            }
+          }
+        },
+        {
+          "name": "List Redemptions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/players/{{playerId}}/redemptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "{{playerId}}", "redemptions"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import (
 
 	"reward-platform/pkg/domain"
 	"reward-platform/services/player-service/internal/api"
+	"reward-platform/services/player-service/internal/dynamodb"
 	"reward-platform/services/player-service/internal/postgres"
 )
 
@@ -41,6 +42,17 @@ func main() {
 		migrationsDir = "services/player-service/migrations"
 	}
 
+	// DYNAMODB_TABLE is required the same way DATABASE_URL is.
+	// DYNAMODB_ENDPOINT is optional — set it to point at DynamoDB Local
+	// for development; leave it empty against real AWS (phase 11), where
+	// the SDK resolves the real regional endpoint itself.
+	dynamoTable := os.Getenv("DYNAMODB_TABLE")
+	if dynamoTable == "" {
+		logger.Error("DYNAMODB_TABLE is required")
+		os.Exit(1)
+	}
+	dynamoEndpoint := os.Getenv("DYNAMODB_ENDPOINT")
+
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelStartup()
 
@@ -57,11 +69,23 @@ func main() {
 	}
 	logger.Info("migrations applied")
 
-	engine := domain.NewEngineWithRepositories(
-		domain.SystemClock{},
-		postgres.NewPlayerRepository(db),
-		postgres.NewLedgerRepository(db),
-	)
+	dynamoClient, err := dynamodb.NewClient(startupCtx, dynamoEndpoint, dynamoTable)
+	if err != nil {
+		logger.Error("failed to build dynamodb client", "error", err)
+		os.Exit(1)
+	}
+	if err := dynamoClient.EnsureTable(startupCtx); err != nil {
+		logger.Error("failed to ensure dynamodb table", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("dynamodb table ready", "table", dynamoTable)
+
+	engine := domain.NewEngineWithRepositories(domain.SystemClock{}, domain.Repositories{
+		Players:     postgres.NewPlayerRepository(db),
+		Ledger:      postgres.NewLedgerRepository(db),
+		Rewards:     dynamodb.NewRewardRepository(dynamoClient),
+		Redemptions: dynamodb.NewRedemptionRepository(dynamoClient),
+	})
 	handler := api.NewHandler(engine, logger)
 
 	srv := &http.Server{

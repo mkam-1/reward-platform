@@ -2,9 +2,22 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 )
+
+// Repositories bundles every storage dependency Engine needs. It exists
+// so NewEngineWithRepositories takes one argument instead of growing a
+// new positional parameter every time another entity gets a real
+// datastore — Player and Ledger moved to Postgres in phase 4, Reward and
+// Redemption move to DynamoDB in phase 5, and Game will get its turn
+// eventually too, without this constructor's signature changing again.
+type Repositories struct {
+	Players     PlayerRepository
+	Ledger      LedgerRepository
+	Rewards     RewardRepository
+	Redemptions RedemptionRepository
+}
 
 // Engine is the application core: it owns players, games, rewards and
 // the points ledger, and enforces the rules that connect them (you can't
@@ -12,57 +25,48 @@ import (
 // transport is layered on top of this (services/player-service); Engine
 // itself knows nothing about it.
 //
-// Players and the ledger are stored behind repository interfaces
-// (PlayerRepository, LedgerRepository) rather than Engine owning their
-// storage directly — that's what lets player-service swap in Postgres-
-// backed persistence while every method below stays exactly as written.
-// Games and Rewards haven't needed that yet (phase 5 gives Reward the
-// same treatment with DynamoDB), so they're still plain in-memory Stores.
+// Every entity except Game is stored behind a repository interface
+// rather than Engine owning storage directly — that's what lets
+// player-service wire in real persistence (Postgres for players/ledger,
+// DynamoDB for rewards/redemptions) while every method below stays
+// exactly as written.
 type Engine struct {
 	clock Clock
 	ids   *idGenerator
 
-	players PlayerRepository
-	games   *Store[Game]
-	rewards *Store[Reward]
-	ledger  LedgerRepository
-
-	// redeemMu serializes RedeemReward end to end, same reasoning as
-	// before (see git history / phase 2) — but worth being honest about
-	// a gap this introduces now that players/ledger can live in a shared
-	// Postgres database: this mutex only protects against races *within
-	// one process*. If two player-service instances ran against the same
-	// database, each would have its own redeemMu, and both could still
-	// race each other on the same reward's Stock field, because Stock
-	// itself is still only in this process's memory, not in the shared
-	// database. Closing that gap for real means moving Reward into a
-	// datastore too and using a database transaction (or row lock)
-	// instead of an in-process mutex — left for when Reward gets its own
-	// persistent store.
-	redeemMu sync.Mutex
+	players     PlayerRepository
+	games       *Store[Game]
+	rewards     RewardRepository
+	ledger      LedgerRepository
+	redemptions RedemptionRepository
 }
 
-// NewEngine builds an Engine against the default in-memory
-// PlayerRepository and LedgerRepository. Tests pass a fake Clock for
-// deterministic timestamps; see NewSystemEngine for production/CLI use,
-// and NewEngineWithRepositories for wiring in real persistence.
+// NewEngine builds an Engine against the default in-memory repositories.
+// Tests pass a fake Clock for deterministic timestamps; see
+// NewSystemEngine for production/CLI use, and NewEngineWithRepositories
+// for wiring in real persistence.
 func NewEngine(clock Clock) *Engine {
-	return NewEngineWithRepositories(clock, NewMemoryPlayerRepository(), NewMemoryLedgerRepository())
+	return NewEngineWithRepositories(clock, Repositories{
+		Players:     NewMemoryPlayerRepository(),
+		Ledger:      NewMemoryLedgerRepository(),
+		Rewards:     NewMemoryRewardRepository(),
+		Redemptions: NewMemoryRedemptionRepository(),
+	})
 }
 
 // NewEngineWithRepositories builds an Engine against caller-supplied
-// PlayerRepository and LedgerRepository implementations. This is what
-// lets player-service's main.go wire in Postgres-backed persistence in
-// place of the in-memory default, without any code in this file
-// changing — the entire reason those two dependencies are interfaces.
-func NewEngineWithRepositories(clock Clock, players PlayerRepository, ledger LedgerRepository) *Engine {
+// repositories. This is what lets player-service's main.go wire in real
+// persistence in place of the in-memory defaults, without any code in
+// this file changing — the entire reason these are interfaces.
+func NewEngineWithRepositories(clock Clock, repos Repositories) *Engine {
 	return &Engine{
-		clock:   clock,
-		ids:     newIDGenerator(),
-		players: players,
-		games:   NewStore[Game](),
-		rewards: NewStore[Reward](),
-		ledger:  ledger,
+		clock:       clock,
+		ids:         newIDGenerator(),
+		players:     repos.Players,
+		games:       NewStore[Game](),
+		rewards:     repos.Rewards,
+		ledger:      repos.Ledger,
+		redemptions: repos.Redemptions,
 	}
 }
 
@@ -139,11 +143,19 @@ func (e *Engine) RegisterReward(ctx context.Context, name string, costPoints, st
 		CostPoints: costPoints,
 		Stock:      stock,
 	}
-	e.rewards.Put(ctx, r.ID, r)
+	if err := e.rewards.Put(ctx, r); err != nil {
+		return Reward{}, fmt.Errorf("register reward: %w", err)
+	}
 	return r, nil
 }
 
-func (e *Engine) Rewards(ctx context.Context) []Reward { return e.rewards.List(ctx) }
+func (e *Engine) Rewards(ctx context.Context) ([]Reward, error) {
+	rewards, err := e.rewards.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list rewards: %w", err)
+	}
+	return rewards, nil
+}
 
 // RecordSession credits a player with the game's PointsPerSession.
 func (e *Engine) RecordSession(ctx context.Context, playerID, gameID string) (LedgerEntry, error) {
@@ -183,12 +195,46 @@ func (e *Engine) Balance(ctx context.Context, playerID string) (int, error) {
 	return balance, nil
 }
 
-// RedeemReward exchanges a player's points for a reward, failing if they
-// can't afford it or it's out of stock. See redeemMu's comment on the
-// Engine struct for what "safe" does and doesn't cover here.
-func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID string) (Redemption, error) {
-	e.redeemMu.Lock()
-	defer e.redeemMu.Unlock()
+// RedeemReward exchanges a player's points for a reward, identified by
+// idempotencyKey — a caller-supplied value (an HTTP client's retry of
+// the exact same request should reuse the exact same key). If empty, one
+// is generated, which is fine for callers (the CLI, load simulation) that
+// don't need retry-safety.
+//
+// The idempotency check runs *first*, before any validation: a retried
+// call with a key that's already been fully processed returns the
+// cached result immediately, skipping balance/stock checks entirely.
+// That ordering matters, not just style — by the time a retry arrives,
+// the player's balance has already dropped by the very redemption being
+// replayed, so re-running the balance check on a replay would wrongly
+// reject it as insufficient funds. The Get() here is an optimistic
+// fast path; Create()'s own conditional write below is the actual
+// correctness guarantee for the rare case where two attempts with a
+// brand-new key race each other.
+//
+// Stock-decrement safety comes from RewardRepository.DecrementStock
+// being atomic at the datastore layer (a conditional UpdateItem for the
+// DynamoDB-backed implementation) — multiple player-service instances
+// sharing one table can no longer both decrement the last unit of
+// stock, closing the gap phase 4's redeemMu left open.
+//
+// What's *not* closed: if DecrementStock or the ledger Append fails
+// after the redemption record was already created, that record is left
+// behind describing a redemption that didn't fully happen — a genuine
+// distributed-transaction problem across two independent datastores
+// (DynamoDB and Postgres) that nothing here fully solves. A correct fix
+// is a saga or outbox pattern, which is phase 6/7 material, not bolted
+// on here as a false sense of safety.
+func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID, idempotencyKey string) (Redemption, error) {
+	if idempotencyKey == "" {
+		idempotencyKey = e.ids.next("redemption")
+	}
+
+	if existing, err := e.redemptions.Get(ctx, idempotencyKey); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return Redemption{}, fmt.Errorf("redeem: idempotency check: %w", err)
+	}
 
 	if _, err := e.players.Get(ctx, playerID); err != nil {
 		return Redemption{}, fmt.Errorf("redeem: %w", err)
@@ -198,6 +244,10 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID string) (R
 		return Redemption{}, fmt.Errorf("redeem: %w", err)
 	}
 	if reward.Stock <= 0 {
+		// Fast-path check: DecrementStock below is the real, atomic
+		// guarantee, but there's no reason to compute a balance or
+		// write a redemption record for a reward that's visibly
+		// already out of stock.
 		return Redemption{}, fmt.Errorf("redeem: reward %q: %w", reward.Name, ErrOutOfStock)
 	}
 
@@ -209,8 +259,31 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID string) (R
 		return Redemption{}, fmt.Errorf("redeem: have %d, need %d: %w", balance, reward.CostPoints, ErrInsufficientBalance)
 	}
 
-	reward.Stock--
-	e.rewards.Put(ctx, reward.ID, reward)
+	redemption := Redemption{
+		Model:       Model{ID: idempotencyKey, CreatedAt: e.clock.Now()},
+		PlayerID:    playerID,
+		RewardID:    rewardID,
+		PointsSpent: reward.CostPoints,
+	}
+
+	created, err := e.redemptions.Create(ctx, redemption)
+	if err != nil {
+		return Redemption{}, fmt.Errorf("redeem: %w", err)
+	}
+	if !created {
+		// Lost a race with a concurrent call using this same new key —
+		// rare, but handled the same way as the fast-path replay above:
+		// fetch and return whatever the other call wrote.
+		existing, err := e.redemptions.Get(ctx, idempotencyKey)
+		if err != nil {
+			return Redemption{}, fmt.Errorf("redeem: idempotent replay: %w", err)
+		}
+		return existing, nil
+	}
+
+	if err := e.rewards.DecrementStock(ctx, rewardID); err != nil {
+		return Redemption{}, fmt.Errorf("redeem: %w", err)
+	}
 
 	entry := LedgerEntry{
 		Model:    Model{ID: e.ids.next("entry"), CreatedAt: e.clock.Now()},
@@ -222,11 +295,16 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID string) (R
 		return Redemption{}, fmt.Errorf("redeem: %w", err)
 	}
 
-	redemption := Redemption{
-		Model:       Model{ID: e.ids.next("redemption"), CreatedAt: e.clock.Now()},
-		PlayerID:    playerID,
-		RewardID:    rewardID,
-		PointsSpent: reward.CostPoints,
-	}
 	return redemption, nil
+}
+
+// ListRedemptions returns a player's redemption history, in whatever
+// order the repository defines (the DynamoDB-backed one returns them via
+// its GSI, sorted by creation time).
+func (e *Engine) ListRedemptions(ctx context.Context, playerID string) ([]Redemption, error) {
+	redemptions, err := e.redemptions.ListByPlayer(ctx, playerID)
+	if err != nil {
+		return nil, fmt.Errorf("list redemptions: %w", err)
+	}
+	return redemptions, nil
 }

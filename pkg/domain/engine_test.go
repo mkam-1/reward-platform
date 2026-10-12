@@ -170,7 +170,7 @@ func TestRedeemReward(t *testing.T) {
 		t.Fatalf("RecordSession: %v", err)
 	}
 
-	redemption, err := e.RedeemReward(ctx, player.ID, reward.ID)
+	redemption, err := e.RedeemReward(ctx, player.ID, reward.ID, "")
 	if err != nil {
 		t.Fatalf("RedeemReward: %v", err)
 	}
@@ -186,9 +186,89 @@ func TestRedeemReward(t *testing.T) {
 		t.Fatalf("balance after redemption = %d, want 20", balance)
 	}
 
-	// Stock was 1; a second redemption must fail as out of stock.
-	if _, err := e.RedeemReward(ctx, player.ID, reward.ID); !errors.Is(err, domain.ErrOutOfStock) {
+	// Stock was 1; a second, distinct (different idempotency key)
+	// redemption must fail as out of stock.
+	if _, err := e.RedeemReward(ctx, player.ID, reward.ID, ""); !errors.Is(err, domain.ErrOutOfStock) {
 		t.Fatalf("second redemption error = %v, want ErrOutOfStock", err)
+	}
+}
+
+func TestRedeemRewardIdempotentReplay(t *testing.T) {
+	e := newTestEngine()
+	player, err := e.RegisterPlayer(ctx, "alice")
+	if err != nil {
+		t.Fatalf("RegisterPlayer: %v", err)
+	}
+	game, err := e.RegisterGame(ctx, "dice-run", 50)
+	if err != nil {
+		t.Fatalf("RegisterGame: %v", err)
+	}
+	// Only 1 in stock: if a retry with the same idempotency key were
+	// mistakenly treated as a second, distinct redemption, this would
+	// fail with ErrOutOfStock instead of returning the first result.
+	reward, err := e.RegisterReward(ctx, "sticker-pack", 30, 1)
+	if err != nil {
+		t.Fatalf("RegisterReward: %v", err)
+	}
+	if _, err := e.RecordSession(ctx, player.ID, game.ID); err != nil {
+		t.Fatalf("RecordSession: %v", err)
+	}
+
+	const idempotencyKey = "client-retry-key-1"
+
+	first, err := e.RedeemReward(ctx, player.ID, reward.ID, idempotencyKey)
+	if err != nil {
+		t.Fatalf("first RedeemReward: %v", err)
+	}
+
+	second, err := e.RedeemReward(ctx, player.ID, reward.ID, idempotencyKey)
+	if err != nil {
+		t.Fatalf("replayed RedeemReward: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("replay ID = %q, want %q (same redemption)", second.ID, first.ID)
+	}
+
+	// The replay must not have spent points or stock a second time.
+	balance, err := e.Balance(ctx, player.ID)
+	if err != nil {
+		t.Fatalf("Balance: %v", err)
+	}
+	if balance != 20 {
+		t.Fatalf("balance after replay = %d, want 20 (only charged once)", balance)
+	}
+}
+
+func TestListRedemptions(t *testing.T) {
+	e := newTestEngine()
+	player, err := e.RegisterPlayer(ctx, "alice")
+	if err != nil {
+		t.Fatalf("RegisterPlayer: %v", err)
+	}
+	game, err := e.RegisterGame(ctx, "dice-run", 100)
+	if err != nil {
+		t.Fatalf("RegisterGame: %v", err)
+	}
+	reward, err := e.RegisterReward(ctx, "sticker-pack", 10, 5)
+	if err != nil {
+		t.Fatalf("RegisterReward: %v", err)
+	}
+	if _, err := e.RecordSession(ctx, player.ID, game.ID); err != nil {
+		t.Fatalf("RecordSession: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := e.RedeemReward(ctx, player.ID, reward.ID, ""); err != nil {
+			t.Fatalf("RedeemReward: %v", err)
+		}
+	}
+
+	redemptions, err := e.ListRedemptions(ctx, player.ID)
+	if err != nil {
+		t.Fatalf("ListRedemptions: %v", err)
+	}
+	if len(redemptions) != 2 {
+		t.Fatalf("len(redemptions) = %d, want 2", len(redemptions))
 	}
 }
 
@@ -203,7 +283,7 @@ func TestRedeemRewardInsufficientBalance(t *testing.T) {
 		t.Fatalf("RegisterReward: %v", err)
 	}
 
-	_, err = e.RedeemReward(ctx, player.ID, reward.ID)
+	_, err = e.RedeemReward(ctx, player.ID, reward.ID, "")
 	if !errors.Is(err, domain.ErrInsufficientBalance) {
 		t.Fatalf("error = %v, want ErrInsufficientBalance", err)
 	}

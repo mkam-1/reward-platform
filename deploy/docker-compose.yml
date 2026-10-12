@@ -2,18 +2,28 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: reward
-      POSTGRES_PASSWORD: reward
-      POSTGRES_DB: reward_platform
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      # Host-side 5433, not 5432: this machine already has a native
+      # PostgreSQL install bound to 5432. Only the host-facing side
+      # changes — player-service talks to this container over the
+      # internal Docker network as "postgres:5432" regardless, so
+      # DATABASE_URL below doesn't need to change.
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U reward -d reward_platform"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    ports:
+      - "8000:8000"
 
   player-service:
     build:
@@ -21,12 +31,19 @@ services:
       dockerfile: services/player-service/Dockerfile
     environment:
       PORT: "8080"
-      DATABASE_URL: "postgres://reward:reward@postgres:5432/reward_platform?sslmode=disable"
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+      DYNAMODB_TABLE: "reward_platform"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      dynamodb-local:
+        condition: service_started
 
 volumes:
   postgres-data:

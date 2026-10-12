@@ -87,11 +87,11 @@ func runDemo() {
 	printBalances(ctx, engine, []domain.Player{alice, bob})
 
 	fmt.Println()
-	redemption, err := engine.RedeemReward(ctx, alice.ID, stickerPack.ID)
+	redemption, err := engine.RedeemReward(ctx, alice.ID, stickerPack.ID, "")
 	must(err)
 	fmt.Printf("redemption: %s spent %d points on %s\n", alice.Username, redemption.PointsSpent, stickerPack.Name)
 
-	if _, err := engine.RedeemReward(ctx, bob.ID, giftCard.ID); err != nil {
+	if _, err := engine.RedeemReward(ctx, bob.ID, giftCard.ID, ""); err != nil {
 		fmt.Printf("redemption: bob tried %s and failed: %v\n", giftCard.Name, err)
 	}
 

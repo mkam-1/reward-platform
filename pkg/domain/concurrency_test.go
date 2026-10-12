@@ -10,11 +10,15 @@ import (
 )
 
 // TestRedeemRewardConcurrentIsSafe fires many goroutines at RedeemReward
-// for the same single-unit reward at once. Before redeemMu existed, this
-// test would (not always, but often — that's exactly what makes data
-// races so dangerous) let two or more goroutines each see Stock == 1 and
-// Balance >= CostPoints before either had decremented anything, so more
-// than one redemption would succeed against one unit of stock.
+// for the same single-unit reward at once, each with its own empty
+// idempotency key (so each is a genuinely distinct attempt, not a replay
+// of another). Safety now comes from RewardRepository.DecrementStock
+// being atomic — the in-memory implementation gets that from a mutex
+// scoped around its own Get-check-Put; the DynamoDB-backed one gets it
+// from a conditional UpdateItem. Either way, this test is what would
+// catch it if that atomicity broke: without it, two or more goroutines
+// could each see Stock == 1 before either had decremented anything, and
+// more than one redemption would succeed against one unit of stock.
 //
 // Run with: go test ./pkg/domain/... -race -run TestRedeemRewardConcurrent
 // -race instruments every memory access and reports a failure the moment
@@ -48,7 +52,7 @@ func TestRedeemRewardConcurrentIsSafe(t *testing.T) {
 	for i := 0; i < attempts; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := e.RedeemReward(ctx, player.ID, reward.ID)
+			_, err := e.RedeemReward(ctx, player.ID, reward.ID, "")
 			switch {
 			case err == nil:
 				successes.Add(1)
