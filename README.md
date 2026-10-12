@@ -17,7 +17,7 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 3 | First HTTP service (`player-service`) | ✅ done |
 | 4 | Relational DB (Postgres) | ✅ done |
 | 5 | NoSQL DB (DynamoDB) | ✅ done |
-| 6 | Split into microservices | ⬜ not started |
+| 6 | Split into microservices | ✅ done |
 | 7 | Architecture & patterns | ⬜ not started |
 | 8 | Testing depth | ⬜ not started |
 | 9 | Observability | ⬜ not started |
@@ -26,6 +26,31 @@ Domain: players earn points by playing games, and redeem points for rewards.
 | 12 | IaC (Terraform/Terragrunt) | ⬜ not started |
 | 13 | CI/CD | ⬜ not started |
 | 14 | Performance & scale (capstone) | ⬜ not started |
+
+## Phase 6 architecture: three services, two ways of talking to each other
+
+- **game-service** owns `Game`. Recording a session publishes a
+  `SessionCompleted` event to SQS instead of crediting points directly —
+  it has no access to the ledger at all anymore.
+- **player-service** owns `Player` and the ledger. It consumes
+  `SessionCompleted` (crediting points, idempotently) and exposes a small
+  gRPC service (`GetBalance`, `DebitPoints`) for synchronous calls from
+  rewards-service. After crediting, it writes a `PointsAwarded` event via
+  the **outbox pattern** — the credit and the "publish this" record
+  commit in one Postgres transaction, so a crash between committing and
+  actually publishing can't silently lose the event. A separate relay
+  loop (`internal/outbox`) polls that table and does the actual
+  publishing.
+- **rewards-service** owns `Reward` and `Redemption` (DynamoDB). Redeeming
+  calls player-service's gRPC service synchronously — it needs a real
+  answer (can this player afford it) before deciding whether the
+  redemption succeeds, which is exactly the case gRPC fits and
+  fire-and-forget SQS doesn't.
+
+Async where eventual consistency is fine (crediting points from a
+session), synchronous where it isn't (checking you can afford a
+redemption *right now*) — not "gRPC vs SQS" as a style choice, but each
+picked for what the specific interaction actually needs.
 
 ## Dev environment: WSL2 Ubuntu
 
@@ -44,73 +69,101 @@ The repo lives at `/mnt/d/reward-platform` inside WSL — the same files as
 `D:\reward-platform` on the Windows side, just accessed through WSL's
 mount of the D: drive.
 
-From a WSL Ubuntu terminal:
+### Go workspace (`go.work`), since phase 6
+
+The single root `go.mod` is gone — `pkg/domain`, `cmd/rewardctl`, `proto`
+(the gRPC contract), `mq` (shared SQS client + event types), and each of
+the three services are now **independent Go modules**, tied together
+locally by `go.work`. Each service's own `go.mod` additionally carries
+`replace` directives pointing at its sibling modules by relative path, so
+it also builds standalone (no `go.work` needed) — which is exactly what
+each service's Dockerfile relies on, copying in only the specific
+siblings it actually needs rather than the whole repo.
+
+One practical consequence: `go build ./...` from the repo root no longer
+works (`go.work` requires module-path patterns, not relative ones). Use
+the actual module path instead:
 
 ```
 cd /mnt/d/reward-platform
-go build ./...
-go vet ./...
-go test ./... -race -cover
+go build reward-platform/pkg/domain/...
+go vet reward-platform/pkg/domain/...
+go test reward-platform/pkg/domain/... -race -cover
 ```
 
+Repeat per module (`reward-platform/services/player-service/...`, `.../game-service/...`, `.../rewards-service/...`, `reward-platform/mq/...`, `reward-platform/cmd/rewardctl/...`) — or `cd` into that module's own
+directory first and use plain `./...`, which works there since you're
+inside a single module at that point.
+
 (From a Windows terminal instead, prefix with `wsl.exe -d Ubuntu --`, e.g.
-`wsl.exe -d Ubuntu -- go build -C /mnt/d/reward-platform ./...`.)
+`wsl.exe -d Ubuntu -- go build -C /mnt/d/reward-platform reward-platform/pkg/domain/...`.)
 
 ## Running things
 
 ```
-go build -o bin/rewardctl ./cmd/rewardctl
+cd cmd/rewardctl
+go build -o ../../bin/rewardctl .
+cd ../..
 ./bin/rewardctl demo
 ./bin/rewardctl simulate -players 15 -games 3 -events 300 -workers 8
 ```
 
-### Trying player-service (with real Postgres + DynamoDB Local)
+### Trying the full stack (player-service + game-service + rewards-service)
 
-player-service requires a real Postgres database (players, the ledger)
-and a real DynamoDB table (rewards, redemptions) — `DATABASE_URL` and
-`DYNAMODB_TABLE` are both required env vars, not defaulted, so missing
-config fails loudly on startup instead of silently running in memory.
-
-First time only: copy the env template (real values aren't needed here —
-see "Secrets" below for why):
+Six containers now: Postgres (players/ledger), DynamoDB Local
+(rewards/redemptions), ElasticMQ (SQS — `session-completed` and
+`points-awarded` queues), and the three Go services. First time only:
 
 ```
 cd deploy
 cp .env.example .env
-```
-
-Then bring up the whole stack (Postgres + DynamoDB Local + player-service):
-
-```
 docker compose up --build -d
-docker compose logs player-service   # confirms migrations ran + table created
+docker compose logs -f player-service   # watch migrations + queue setup
 ```
 
-From any terminal:
+Player/game/reward registration and the balance check are still plain
+HTTP, same as before:
 
 ```
-curl -s http://localhost:8080/healthz
+curl -s http://localhost:8080/healthz          # player-service
+curl -s http://localhost:8081/healthz          # game-service
+curl -s http://localhost:8082/healthz          # rewards-service
+
 curl -s -X POST http://localhost:8080/players -d '{"username":"alice"}'
-curl -s -X POST http://localhost:8080/games -d '{"name":"dice-run","pointsPerSession":15}'
-curl -s -X POST http://localhost:8080/players/player_1/sessions -d '{"gameId":"game_1"}'
-curl -s -X POST http://localhost:8080/rewards -d '{"name":"sticker-pack","costPoints":10,"stock":5}'
-curl -s -X POST http://localhost:8080/players/player_1/redemptions \
+curl -s -X POST http://localhost:8081/games -d '{"name":"dice-run","pointsPerSession":15}'
+curl -s -X POST http://localhost:8082/rewards -d '{"name":"sticker-pack","costPoints":10,"stock":5}'
+```
+
+**Recording a session is now asynchronous** — it hits game-service, not
+player-service, and returns 202 immediately (nothing in the response
+body to show for it; the actual credit happens moments later once
+player-service consumes the event):
+
+```
+curl -s -i -X POST http://localhost:8081/games/game_1/sessions -d '{"playerId":"player_1"}'
+# ... give it a second for the SQS round trip ...
+curl -s http://localhost:8080/players/player_1/balance
+```
+
+**Redeeming a reward now hits rewards-service**, which calls
+player-service over gRPC behind the scenes to check/debit the balance:
+
+```
+curl -s -X POST http://localhost:8082/players/player_1/redemptions \
   -H "Idempotency-Key: demo-key-1" -d '{"rewardId":"reward_1"}'
 curl -s http://localhost:8080/players/player_1/balance
-curl -s http://localhost:8080/players/player_1/redemptions
+curl -s http://localhost:8082/players/player_1/redemptions
 ```
 
 Retry that exact `redemptions` POST with the same `Idempotency-Key` and
-confirm the balance doesn't drop a second time — that's the point of
-phase 5's idempotency key, not just its DynamoDB persistence.
+confirm the balance doesn't drop a second time.
 
-Prove persistence survives a restart (now covering rewards/redemptions
-too, not just players/ledger):
+Persistence still survives a restart of any one service — Postgres and
+DynamoDB are unaffected by a service container restarting:
 
 ```
 docker compose restart player-service
-curl -s http://localhost:8080/players   # player_1 is still there
-curl -s http://localhost:8080/rewards   # sticker-pack is still there
+curl -s http://localhost:8080/players
 ```
 
 Tear down when done:
@@ -137,8 +190,10 @@ Excluded from the default `go test ./...` run (needs Docker, takes real
 seconds) — run explicitly:
 
 ```
-go test -tags=integration ./services/player-service/internal/postgres/... -v
-go test -tags=integration ./services/player-service/internal/dynamodb/... -v
+cd services/player-service
+go test -tags=integration ./internal/postgres/... -v
+cd ../rewards-service
+go test -tags=integration ./internal/dynamodb/... -v
 ```
 
 Inside WSL, testcontainers needs `DOCKER_HOST` pointed at the socket

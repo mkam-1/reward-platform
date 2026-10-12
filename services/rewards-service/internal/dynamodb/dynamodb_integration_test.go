@@ -2,7 +2,7 @@
 
 // Run explicitly (needs Docker):
 //
-//	go test -tags=integration ./services/player-service/internal/dynamodb/...
+//	go test -tags=integration ./services/rewards-service/internal/dynamodb/...
 package dynamodb_test
 
 import (
@@ -14,7 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"reward-platform/pkg/domain"
-	"reward-platform/services/player-service/internal/dynamodb"
+	"reward-platform/services/rewards-service/internal/dynamodb"
 )
 
 // newTestClient starts a real, throwaway DynamoDB Local container (the

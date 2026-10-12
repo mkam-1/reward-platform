@@ -10,22 +10,23 @@ import (
 	"testing"
 
 	"reward-platform/pkg/domain"
+	"reward-platform/services/player-service/internal/ledger"
 )
 
-// newTestHandler builds a fresh engine + handler per test so tests never
-// share state. The logger writes to io.Discard — we're asserting on HTTP
-// responses here, not log output.
+// newTestHandler builds a fresh ledger + handler per test, backed by
+// in-memory repositories, so tests never share state and don't need a
+// real database. The logger writes to io.Discard — we're asserting on
+// HTTP responses here, not log output.
 func newTestHandler() http.Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewHandler(domain.NewSystemEngine(), logger)
+	playerLedger := ledger.New(domain.SystemClock{}, domain.NewMemoryPlayerRepository(), domain.NewMemoryLedgerRepository())
+	return NewHandler(playerLedger, logger)
 }
 
 // doRequest round-trips a request through the handler and decodes the
 // JSON response body into T, returning the recorder so tests can also
-// assert on the status code. Trailing [2]string pairs set extra request
-// headers (e.g. Idempotency-Key) without every existing call site having
-// to pass an empty list.
-func doRequest[T any](t *testing.T, h http.Handler, method, path string, body any, headers ...[2]string) (*httptest.ResponseRecorder, T) {
+// assert on the status code.
+func doRequest[T any](t *testing.T, h http.Handler, method, path string, body any) (*httptest.ResponseRecorder, T) {
 	t.Helper()
 
 	var reader *bytes.Reader
@@ -40,9 +41,6 @@ func doRequest[T any](t *testing.T, h http.Handler, method, path string, body an
 	}
 
 	req := httptest.NewRequest(method, path, reader)
-	for _, hdr := range headers {
-		req.Header.Set(hdr[0], hdr[1])
-	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -108,94 +106,30 @@ func TestGetPlayerNotFound(t *testing.T) {
 	}
 }
 
-func TestSessionAndBalanceFlow(t *testing.T) {
+func TestListPlayers(t *testing.T) {
 	h := newTestHandler()
 
-	_, player := doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
-	_, game := doRequest[gameResponse](t, h, http.MethodPost, "/games", createGameRequest{Name: "dice-run", PointsPerSession: 15})
+	doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
+	doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "bob"})
 
-	sessionRec, entry := doRequest[ledgerEntryResponse](t, h, http.MethodPost, "/players/"+player.ID+"/sessions", recordSessionRequest{GameID: game.ID})
-	if sessionRec.Code != http.StatusCreated {
-		t.Fatalf("session status = %d, want 201", sessionRec.Code)
-	}
-	if entry.Delta != 15 {
-		t.Fatalf("Delta = %d, want 15", entry.Delta)
-	}
-
-	balanceRec, balance := doRequest[balanceResponse](t, h, http.MethodGet, "/players/"+player.ID+"/balance", nil)
-	if balanceRec.Code != http.StatusOK {
-		t.Fatalf("balance status = %d, want 200", balanceRec.Code)
-	}
-	if balance.Balance != 15 {
-		t.Fatalf("balance = %d, want 15", balance.Balance)
-	}
-}
-
-func TestRedeemRewardInsufficientBalance(t *testing.T) {
-	h := newTestHandler()
-
-	_, player := doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
-	_, reward := doRequest[rewardResponse](t, h, http.MethodPost, "/rewards", createRewardRequest{Name: "console", CostPoints: 1000, Stock: 1})
-
-	rec, body := doRequest[errorResponse](t, h, http.MethodPost, "/players/"+player.ID+"/redemptions", redeemRequest{RewardID: reward.ID})
-
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", rec.Code)
-	}
-	if body.Error == "" {
-		t.Fatal("expected a non-empty error message")
-	}
-}
-
-func TestRedeemRewardIdempotencyKeyHeader(t *testing.T) {
-	h := newTestHandler()
-
-	_, player := doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
-	_, game := doRequest[gameResponse](t, h, http.MethodPost, "/games", createGameRequest{Name: "dice-run", PointsPerSession: 50})
-	_, reward := doRequest[rewardResponse](t, h, http.MethodPost, "/rewards", createRewardRequest{Name: "sticker-pack", CostPoints: 30, Stock: 1})
-	doRequest[ledgerEntryResponse](t, h, http.MethodPost, "/players/"+player.ID+"/sessions", recordSessionRequest{GameID: game.ID})
-
-	idempotencyHeader := [2]string{"Idempotency-Key", "test-key-1"}
-
-	firstRec, first := doRequest[redemptionResponse](t, h, http.MethodPost, "/players/"+player.ID+"/redemptions", redeemRequest{RewardID: reward.ID}, idempotencyHeader)
-	if firstRec.Code != http.StatusCreated {
-		t.Fatalf("first redeem status = %d, want 201", firstRec.Code)
-	}
-
-	// Same Idempotency-Key again: must return the same redemption, not
-	// fail with insufficient balance (the balance already reflects the
-	// first call) and not double-charge.
-	secondRec, second := doRequest[redemptionResponse](t, h, http.MethodPost, "/players/"+player.ID+"/redemptions", redeemRequest{RewardID: reward.ID}, idempotencyHeader)
-	if secondRec.Code != http.StatusCreated {
-		t.Fatalf("replayed redeem status = %d, want 201", secondRec.Code)
-	}
-	if second.ID != first.ID {
-		t.Fatalf("replay ID = %q, want %q", second.ID, first.ID)
-	}
-
-	_, balance := doRequest[balanceResponse](t, h, http.MethodGet, "/players/"+player.ID+"/balance", nil)
-	if balance.Balance != 20 {
-		t.Fatalf("balance = %d, want 20 (charged once, not twice)", balance.Balance)
-	}
-}
-
-func TestListRedemptions(t *testing.T) {
-	h := newTestHandler()
-
-	_, player := doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
-	_, game := doRequest[gameResponse](t, h, http.MethodPost, "/games", createGameRequest{Name: "dice-run", PointsPerSession: 100})
-	_, reward := doRequest[rewardResponse](t, h, http.MethodPost, "/rewards", createRewardRequest{Name: "sticker-pack", CostPoints: 10, Stock: 5})
-	doRequest[ledgerEntryResponse](t, h, http.MethodPost, "/players/"+player.ID+"/sessions", recordSessionRequest{GameID: game.ID})
-
-	for i := 0; i < 2; i++ {
-		doRequest[redemptionResponse](t, h, http.MethodPost, "/players/"+player.ID+"/redemptions", redeemRequest{RewardID: reward.ID})
-	}
-
-	rec, list := doRequest[[]redemptionResponse](t, h, http.MethodGet, "/players/"+player.ID+"/redemptions", nil)
+	rec, list := doRequest[[]playerResponse](t, h, http.MethodGet, "/players", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	if len(list) != 2 {
 		t.Fatalf("len(list) = %d, want 2", len(list))
+	}
+}
+
+func TestGetBalanceForNewPlayerIsZero(t *testing.T) {
+	h := newTestHandler()
+	_, player := doRequest[playerResponse](t, h, http.MethodPost, "/players", createPlayerRequest{Username: "alice"})
+
+	rec, balance := doRequest[balanceResponse](t, h, http.MethodGet, "/players/"+player.ID+"/balance", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if balance.Balance != 0 {
+		t.Fatalf("balance = %d, want 0", balance.Balance)
 	}
 }

@@ -9,8 +9,7 @@ services:
       # Host-side 5433, not 5432: this machine already has a native
       # PostgreSQL install bound to 5432. Only the host-facing side
       # changes — player-service talks to this container over the
-      # internal Docker network as "postgres:5432" regardless, so
-      # DATABASE_URL below doesn't need to change.
+      # internal Docker network as "postgres:5432" regardless.
       - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -25,25 +24,91 @@ services:
     ports:
       - "8000:8000"
 
+  # ElasticMQ is a free, open-source SQS-compatible emulator — the first
+  # choice here was LocalStack, but its `:latest` image now gates SQS
+  # (and everything else) behind a paid license/auth token it checks for
+  # on startup, even for services that used to be free. ElasticMQ has no
+  # such gate. elasticmq.conf pins the queue-URL hostname it hands back
+  # to "sqs" (this service's Docker-network name) instead of its default
+  # of "localhost", which would be unreachable from any other container.
+  sqs:
+    image: softwaremill/elasticmq-native:latest
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
+    ports:
+      - "9324:9324"
+
   player-service:
     build:
       context: ..
       dockerfile: services/player-service/Dockerfile
     environment:
       PORT: "8080"
+      GRPC_PORT: "9090"
       DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
-      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
-      DYNAMODB_TABLE: "reward_platform"
+      SQS_ENDPOINT: "http://sqs:9324"
+      SESSION_COMPLETED_QUEUE: "session-completed"
+      POINTS_AWARDED_QUEUE: "points-awarded"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
     ports:
       - "8080:8080"
+      - "9090:9090"
     depends_on:
       postgres:
         condition: service_healthy
-      dynamodb-local:
+      sqs:
         condition: service_started
+    # ElasticMQ has no built-in healthcheck endpoint this minimal image
+    # can run, so "sqs: condition: service_started" above only waits for
+    # the container to start, not for it to actually accept connections
+    # yet — a real (if small) race. restart: on-failure covers that gap:
+    # if EnsureQueue loses that race on first boot, the container exits
+    # and Docker restarts it, which succeeds once ElasticMQ is actually
+    # ready — in practice converges within a second or two.
+    restart: on-failure:5
+
+  game-service:
+    build:
+      context: ..
+      dockerfile: services/game-service/Dockerfile
+    environment:
+      PORT: "8080"
+      SQS_ENDPOINT: "http://sqs:9324"
+      SESSION_COMPLETED_QUEUE: "session-completed"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    ports:
+      - "8081:8080"
+    depends_on:
+      sqs:
+        condition: service_started
+    restart: on-failure:5
+
+  rewards-service:
+    build:
+      context: ..
+      dockerfile: services/rewards-service/Dockerfile
+    environment:
+      PORT: "8080"
+      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+      DYNAMODB_TABLE: "reward_platform"
+      SQS_ENDPOINT: "http://sqs:9324"
+      POINTS_AWARDED_QUEUE: "points-awarded"
+      PLAYER_SERVICE_GRPC_ADDR: "player-service:9090"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    ports:
+      - "8082:8080"
+    depends_on:
+      sqs:
+        condition: service_started
+      player-service:
+        condition: service_started
+    restart: on-failure:5
 
 volumes:
   postgres-data:

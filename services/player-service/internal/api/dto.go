@@ -6,11 +6,17 @@ import (
 	"reward-platform/pkg/domain"
 )
 
-// Request/response DTOs live separately from domain.Player et al. on
-// purpose: the JSON shape the outside world sees is an API contract that
-// has to stay stable, while the domain types are free to change as the
-// domain model evolves. Collapsing the two together would mean every
-// internal refactor risks becoming a breaking API change.
+// Request/response DTOs live separately from domain.Player on purpose:
+// the JSON shape the outside world sees is an API contract that has to
+// stay stable, while the domain type is free to change as the domain
+// model evolves.
+//
+// This file shrank a lot in phase 6: Game, Reward, Redemption and their
+// DTOs moved out to game-service and rewards-service along with the
+// logic that used them. Player-service's HTTP surface is now just
+// players and their balance — everything else about a player's points
+// now arrives over gRPC (DebitPoints, from rewards-service) or SQS (a
+// SessionCompleted event, from game-service), not HTTP.
 
 type createPlayerRequest struct {
 	Username string `json:"username"`
@@ -29,70 +35,4 @@ func toPlayerResponse(p domain.Player) playerResponse {
 type balanceResponse struct {
 	PlayerID string `json:"playerId"`
 	Balance  int    `json:"balance"`
-}
-
-type createGameRequest struct {
-	Name             string `json:"name"`
-	PointsPerSession int    `json:"pointsPerSession"`
-}
-
-type gameResponse struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	PointsPerSession int       `json:"pointsPerSession"`
-	CreatedAt        time.Time `json:"createdAt"`
-}
-
-func toGameResponse(g domain.Game) gameResponse {
-	return gameResponse{ID: g.ID, Name: g.Name, PointsPerSession: g.PointsPerSession, CreatedAt: g.CreatedAt}
-}
-
-type createRewardRequest struct {
-	Name       string `json:"name"`
-	CostPoints int    `json:"costPoints"`
-	Stock      int    `json:"stock"`
-}
-
-type rewardResponse struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	CostPoints int       `json:"costPoints"`
-	Stock      int       `json:"stock"`
-	CreatedAt  time.Time `json:"createdAt"`
-}
-
-func toRewardResponse(r domain.Reward) rewardResponse {
-	return rewardResponse{ID: r.ID, Name: r.Name, CostPoints: r.CostPoints, Stock: r.Stock, CreatedAt: r.CreatedAt}
-}
-
-type recordSessionRequest struct {
-	GameID string `json:"gameId"`
-}
-
-type ledgerEntryResponse struct {
-	ID        string    `json:"id"`
-	PlayerID  string    `json:"playerId"`
-	Delta     int       `json:"delta"`
-	Reason    string    `json:"reason"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
-func toLedgerEntryResponse(e domain.LedgerEntry) ledgerEntryResponse {
-	return ledgerEntryResponse{ID: e.ID, PlayerID: e.PlayerID, Delta: e.Delta, Reason: e.Reason, CreatedAt: e.CreatedAt}
-}
-
-type redeemRequest struct {
-	RewardID string `json:"rewardId"`
-}
-
-type redemptionResponse struct {
-	ID          string    `json:"id"`
-	PlayerID    string    `json:"playerId"`
-	RewardID    string    `json:"rewardId"`
-	PointsSpent int       `json:"pointsSpent"`
-	CreatedAt   time.Time `json:"createdAt"`
-}
-
-func toRedemptionResponse(r domain.Redemption) redemptionResponse {
-	return redemptionResponse{ID: r.ID, PlayerID: r.PlayerID, RewardID: r.RewardID, PointsSpent: r.PointsSpent, CreatedAt: r.CreatedAt}
 }

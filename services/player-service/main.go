@@ -1,37 +1,50 @@
-// Command player-service exposes the reward-platform domain engine over
-// HTTP. It's phase 3's deliverable: the same Engine from pkg/domain that
-// cmd/rewardctl drives from the command line, now wrapped in a real
-// network-facing service with routing, middleware, and graceful
-// shutdown.
+// Command player-service owns Player and the points ledger. As of
+// phase 6 it speaks three protocols at once, each for a different
+// caller: HTTP for end users (internal/api), gRPC for rewards-service's
+// synchronous balance/debit calls during a redemption (internal/grpcapi),
+// and SQS for game-service's asynchronous SessionCompleted events
+// (consumed here in main, credited via internal/ledger, outbox-relayed
+// back out as PointsAwarded via internal/outbox).
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
+	"reward-platform/mq"
 	"reward-platform/pkg/domain"
 	"reward-platform/services/player-service/internal/api"
-	"reward-platform/services/player-service/internal/dynamodb"
+	"reward-platform/services/player-service/internal/grpcapi"
+	"reward-platform/services/player-service/internal/ledger"
+	"reward-platform/services/player-service/internal/outbox"
 	"reward-platform/services/player-service/internal/postgres"
+
+	playerv1 "reward-platform/proto/player/v1"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	httpPort := os.Getenv("PORT")
+	if httpPort == "" {
+		httpPort = "8080"
+	}
+	grpcPort := os.Getenv("GRPC_PORT")
+	if grpcPort == "" {
+		grpcPort = "9090"
 	}
 
-	// DATABASE_URL is required, not defaulted — a service silently
-	// falling back to in-memory storage because a connection string was
-	// missing would be a much worse bug than refusing to start at all.
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		logger.Error("DATABASE_URL is required")
@@ -42,16 +55,15 @@ func main() {
 		migrationsDir = "services/player-service/migrations"
 	}
 
-	// DYNAMODB_TABLE is required the same way DATABASE_URL is.
-	// DYNAMODB_ENDPOINT is optional — set it to point at DynamoDB Local
-	// for development; leave it empty against real AWS (phase 11), where
-	// the SDK resolves the real regional endpoint itself.
-	dynamoTable := os.Getenv("DYNAMODB_TABLE")
-	if dynamoTable == "" {
-		logger.Error("DYNAMODB_TABLE is required")
-		os.Exit(1)
+	sqsEndpoint := os.Getenv("SQS_ENDPOINT")
+	sessionCompletedQueue := os.Getenv("SESSION_COMPLETED_QUEUE")
+	if sessionCompletedQueue == "" {
+		sessionCompletedQueue = "session-completed"
 	}
-	dynamoEndpoint := os.Getenv("DYNAMODB_ENDPOINT")
+	pointsAwardedQueue := os.Getenv("POINTS_AWARDED_QUEUE")
+	if pointsAwardedQueue == "" {
+		pointsAwardedQueue = "points-awarded"
+	}
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelStartup()
@@ -69,45 +81,73 @@ func main() {
 	}
 	logger.Info("migrations applied")
 
-	dynamoClient, err := dynamodb.NewClient(startupCtx, dynamoEndpoint, dynamoTable)
+	sqsClient, err := mq.NewClient(startupCtx, sqsEndpoint)
 	if err != nil {
-		logger.Error("failed to build dynamodb client", "error", err)
+		logger.Error("failed to build sqs client", "error", err)
 		os.Exit(1)
 	}
-	if err := dynamoClient.EnsureTable(startupCtx); err != nil {
-		logger.Error("failed to ensure dynamodb table", "error", err)
+	sessionCompletedURL, err := sqsClient.EnsureQueue(startupCtx, sessionCompletedQueue)
+	if err != nil {
+		logger.Error("failed to ensure session-completed queue", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("dynamodb table ready", "table", dynamoTable)
+	pointsAwardedURL, err := sqsClient.EnsureQueue(startupCtx, pointsAwardedQueue)
+	if err != nil {
+		logger.Error("failed to ensure points-awarded queue", "error", err)
+		os.Exit(1)
+	}
 
-	engine := domain.NewEngineWithRepositories(domain.SystemClock{}, domain.Repositories{
-		Players:     postgres.NewPlayerRepository(db),
-		Ledger:      postgres.NewLedgerRepository(db),
-		Rewards:     dynamodb.NewRewardRepository(dynamoClient),
-		Redemptions: dynamodb.NewRedemptionRepository(dynamoClient),
-	})
-	handler := api.NewHandler(engine, logger)
+	ledgerRepo := postgres.NewLedgerRepository(db)
+	playerLedger := ledger.New(domain.SystemClock{}, postgres.NewPlayerRepository(db), ledgerRepo)
 
-	srv := &http.Server{
-		Addr:         ":" + port,
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// SQS consumer: credits points for every SessionCompleted event
+	// game-service publishes.
+	go func() {
+		err := sqsClient.Consume(ctx, sessionCompletedURL, logger, func(ctx context.Context, body string) error {
+			return handleSessionCompleted(ctx, playerLedger, body)
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("session-completed consumer stopped", "error", err)
+		}
+	}()
+
+	// Outbox relay: publishes PointsAwarded rows CreditPoints wrote,
+	// every 2s. See internal/outbox's doc comment for why this runs
+	// separately instead of publishing inline.
+	relay := outbox.NewRelay(ledgerRepo, sqsClient, pointsAwardedURL, logger)
+	go relay.Run(ctx, 2*time.Second)
+
+	// gRPC server: rewards-service's synchronous balance/debit calls.
+	grpcServer := grpc.NewServer()
+	playerv1.RegisterPlayerLedgerServer(grpcServer, grpcapi.NewServer(playerLedger))
+	grpcListener, err := net.Listen("tcp", ":"+grpcPort)
+	if err != nil {
+		logger.Error("failed to listen for grpc", "error", err)
+		os.Exit(1)
+	}
+	go func() {
+		logger.Info("player-service grpc listening", "addr", grpcListener.Addr().String())
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			logger.Error("grpc server error", "error", err)
+		}
+	}()
+
+	// HTTP server: end users.
+	handler := api.NewHandler(playerLedger, logger)
+	httpServer := &http.Server{
+		Addr:         ":" + httpPort,
 		Handler:      handler,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-
-	// signal.NotifyContext gives us a context that's cancelled the
-	// moment the process receives SIGINT (Ctrl+C) or SIGTERM (what
-	// Docker/Kubernetes send on a normal stop) — that's the trigger for
-	// the graceful shutdown below, instead of the process just dying
-	// mid-request.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
-		logger.Info("player-service listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server error", "error", err)
+		logger.Info("player-service http listening", "addr", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("http server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -115,15 +155,26 @@ func main() {
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 
-	// Shutdown stops accepting new connections and waits for in-flight
-	// requests to finish, up to this timeout — so a deploy or restart
-	// doesn't cut an in-progress request off mid-response.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	grpcServer.GracefulStop()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("shutdown complete")
+}
+
+// handleSessionCompleted decodes a game-service SessionCompleted
+// message and credits the points. An error here leaves the SQS message
+// on the queue to be redelivered (see mq.Client.Consume) — safe because
+// CreditPoints is idempotent on the event's own IdempotencyKey.
+func handleSessionCompleted(ctx context.Context, playerLedger *ledger.PlayerLedger, body string) error {
+	var event mq.SessionCompleted
+	if err := json.Unmarshal([]byte(body), &event); err != nil {
+		return fmt.Errorf("unmarshal session completed event: %w", err)
+	}
+	_, err := playerLedger.CreditPoints(ctx, event.PlayerID, event.Points, event.Reason, event.IdempotencyKey)
+	return err
 }

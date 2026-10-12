@@ -1,0 +1,11 @@
+go 1.26.6
+
+use (
+	./pkg/domain
+	./cmd/rewardctl
+	./proto
+	./mq
+	./services/player-service
+	./services/game-service
+	./services/rewards-service
+)

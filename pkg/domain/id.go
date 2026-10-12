@@ -5,20 +5,23 @@ import (
 	"sync"
 )
 
-// idGenerator hands out simple, readable, monotonically increasing IDs
+// IDGenerator hands out simple, readable, monotonically increasing IDs
 // like "player_1", "game_2", scoped per prefix. Real IDs (UUIDs, ULIDs)
 // arrive when a real datastore does; this exists so tests get predictable,
 // dependency-free IDs in the meantime.
-type idGenerator struct {
+//
+// Exported (phase 6) so each split-out service can mint its own IDs the
+// same way Engine always has, without duplicating this type.
+type IDGenerator struct {
 	mu     sync.Mutex
 	counts map[string]int
 }
 
-func newIDGenerator() *idGenerator {
-	return &idGenerator{counts: make(map[string]int)}
+func NewIDGenerator() *IDGenerator {
+	return &IDGenerator{counts: make(map[string]int)}
 }
 
-func (g *idGenerator) next(prefix string) string {
+func (g *IDGenerator) Next(prefix string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.counts[prefix]++

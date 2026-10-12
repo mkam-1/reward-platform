@@ -106,7 +106,7 @@ func TestPlayerRepository(t *testing.T) {
 		{Model: domain.Model{ID: "entry_2", CreatedAt: time.Now().UTC()}, PlayerID: player.ID, Delta: -10, Reason: "redeemed sticker-pack"},
 	}
 	for _, e := range entries {
-		if err := ledger.Append(ctx, e); err != nil {
+		if _, err := ledger.Append(ctx, e); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}
@@ -127,5 +127,97 @@ func TestPlayerRepository(t *testing.T) {
 	}
 	if balance != 0 {
 		t.Fatalf("Balance (no entries) = %d, want 0", balance)
+	}
+}
+
+func TestDebitIfSufficientAndOutbox(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+
+	players := postgres.NewPlayerRepository(db)
+	ledgerRepo := postgres.NewLedgerRepository(db)
+
+	player := domain.Player{
+		Model:    domain.Model{ID: "player_debit_1", CreatedAt: time.Now().UTC().Truncate(time.Microsecond)},
+		Username: "alice",
+	}
+	if err := players.Put(ctx, player); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	credit := domain.LedgerEntry{
+		Model: domain.Model{ID: "entry_credit_1", CreatedAt: time.Now().UTC()}, PlayerID: player.ID, Delta: 50, Reason: "played dice-run",
+	}
+	if _, err := ledgerRepo.Append(ctx, credit); err != nil {
+		t.Fatalf("Append credit: %v", err)
+	}
+
+	// DebitIfSufficient: insufficient balance must fail and leave the
+	// balance untouched.
+	tooMuch := domain.LedgerEntry{Model: domain.Model{ID: "entry_debit_toomuch", CreatedAt: time.Now().UTC()}, PlayerID: player.ID, Delta: -1000, Reason: "redeemed console"}
+	if _, _, err := ledgerRepo.DebitIfSufficient(ctx, tooMuch, 1000); err == nil {
+		t.Fatal("expected insufficient-balance error, got nil")
+	}
+	if balance, err := ledgerRepo.Balance(ctx, player.ID); err != nil || balance != 50 {
+		t.Fatalf("Balance after failed debit = %d, %v, want 50, nil", balance, err)
+	}
+
+	// A sufficient debit succeeds, and a replay with the same entry ID
+	// must not double-debit.
+	debit := domain.LedgerEntry{Model: domain.Model{ID: "entry_debit_1", CreatedAt: time.Now().UTC()}, PlayerID: player.ID, Delta: -30, Reason: "redeemed sticker-pack"}
+	newBalance, created, err := ledgerRepo.DebitIfSufficient(ctx, debit, 30)
+	if err != nil {
+		t.Fatalf("DebitIfSufficient: %v", err)
+	}
+	if !created || newBalance != 20 {
+		t.Fatalf("created=%v newBalance=%d, want true, 20", created, newBalance)
+	}
+	_, created, err = ledgerRepo.DebitIfSufficient(ctx, debit, 30)
+	if err != nil {
+		t.Fatalf("DebitIfSufficient (replay): %v", err)
+	}
+	if created {
+		t.Fatal("replay reported created=true, want false")
+	}
+	if balance, err := ledgerRepo.Balance(ctx, player.ID); err != nil || balance != 20 {
+		t.Fatalf("Balance after replay = %d, %v, want 20, nil (not debited twice)", balance, err)
+	}
+
+	// AppendWithOutbox: the credit and its outbox row should both be
+	// visible, and the relay's read/mark-published cycle should work.
+	outboxCredit := domain.LedgerEntry{Model: domain.Model{ID: "entry_outbox_1", CreatedAt: time.Now().UTC()}, PlayerID: player.ID, Delta: 10, Reason: "played dice-run"}
+	event := domain.OutboxEvent{Type: "PointsAwarded", Payload: `{"playerId":"player_debit_1","points":10}`}
+	if _, err := ledgerRepo.AppendWithOutbox(ctx, outboxCredit, event); err != nil {
+		t.Fatalf("AppendWithOutbox: %v", err)
+	}
+
+	pending, err := ledgerRepo.PendingOutboxEvents(ctx, 10)
+	if err != nil {
+		t.Fatalf("PendingOutboxEvents: %v", err)
+	}
+	found := false
+	for _, row := range pending {
+		if row.ID == outboxCredit.ID {
+			found = true
+			if row.Payload != event.Payload {
+				t.Fatalf("payload = %q, want %q", row.Payload, event.Payload)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected the new outbox row to be pending")
+	}
+
+	if err := ledgerRepo.MarkOutboxPublished(ctx, outboxCredit.ID, time.Now()); err != nil {
+		t.Fatalf("MarkOutboxPublished: %v", err)
+	}
+	pending, err = ledgerRepo.PendingOutboxEvents(ctx, 10)
+	if err != nil {
+		t.Fatalf("PendingOutboxEvents (after publish): %v", err)
+	}
+	for _, row := range pending {
+		if row.ID == outboxCredit.ID {
+			t.Fatal("row still pending after MarkOutboxPublished")
+		}
 	}
 }

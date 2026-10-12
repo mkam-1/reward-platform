@@ -32,7 +32,7 @@ type Repositories struct {
 // exactly as written.
 type Engine struct {
 	clock Clock
-	ids   *idGenerator
+	ids   *IDGenerator
 
 	players     PlayerRepository
 	games       *Store[Game]
@@ -61,7 +61,7 @@ func NewEngine(clock Clock) *Engine {
 func NewEngineWithRepositories(clock Clock, repos Repositories) *Engine {
 	return &Engine{
 		clock:       clock,
-		ids:         newIDGenerator(),
+		ids:         NewIDGenerator(),
 		players:     repos.Players,
 		games:       NewStore[Game](),
 		rewards:     repos.Rewards,
@@ -81,7 +81,7 @@ func (e *Engine) RegisterPlayer(ctx context.Context, username string) (Player, e
 		return Player{}, &ValidationError{Field: "username", Msg: "must not be empty"}
 	}
 	p := Player{
-		Model:    Model{ID: e.ids.next("player"), CreatedAt: e.clock.Now()},
+		Model:    Model{ID: e.ids.Next("player"), CreatedAt: e.clock.Now()},
 		Username: username,
 	}
 	if err := e.players.Put(ctx, p); err != nil {
@@ -117,7 +117,7 @@ func (e *Engine) RegisterGame(ctx context.Context, name string, pointsPerSession
 		return Game{}, &ValidationError{Field: "pointsPerSession", Msg: "must be positive"}
 	}
 	g := Game{
-		Model:            Model{ID: e.ids.next("game"), CreatedAt: e.clock.Now()},
+		Model:            Model{ID: e.ids.Next("game"), CreatedAt: e.clock.Now()},
 		Name:             name,
 		PointsPerSession: pointsPerSession,
 	}
@@ -138,7 +138,7 @@ func (e *Engine) RegisterReward(ctx context.Context, name string, costPoints, st
 		return Reward{}, &ValidationError{Field: "stock", Msg: "must not be negative"}
 	}
 	r := Reward{
-		Model:      Model{ID: e.ids.next("reward"), CreatedAt: e.clock.Now()},
+		Model:      Model{ID: e.ids.Next("reward"), CreatedAt: e.clock.Now()},
 		Name:       name,
 		CostPoints: costPoints,
 		Stock:      stock,
@@ -168,13 +168,13 @@ func (e *Engine) RecordSession(ctx context.Context, playerID, gameID string) (Le
 	}
 
 	entry := LedgerEntry{
-		Model:    Model{ID: e.ids.next("entry"), CreatedAt: e.clock.Now()},
+		Model:    Model{ID: e.ids.Next("entry"), CreatedAt: e.clock.Now()},
 		PlayerID: playerID,
 		Delta:    game.PointsPerSession,
 		Reason:   fmt.Sprintf("played %s", game.Name),
 	}
 
-	if err := e.ledger.Append(ctx, entry); err != nil {
+	if _, err := e.ledger.Append(ctx, entry); err != nil {
 		return LedgerEntry{}, fmt.Errorf("record session: %w", err)
 	}
 	return entry, nil
@@ -214,20 +214,26 @@ func (e *Engine) Balance(ctx context.Context, playerID string) (int, error) {
 //
 // Stock-decrement safety comes from RewardRepository.DecrementStock
 // being atomic at the datastore layer (a conditional UpdateItem for the
-// DynamoDB-backed implementation) — multiple player-service instances
-// sharing one table can no longer both decrement the last unit of
-// stock, closing the gap phase 4's redeemMu left open.
+// DynamoDB-backed implementation), and balance safety comes from
+// LedgerRepository.DebitIfSufficient the same way (a row-locked
+// transaction for the Postgres-backed implementation) — multiple
+// player-service instances sharing one table/database can no longer
+// both decrement the last unit of stock, or both debit a balance that
+// only actually covers one of them. That closes the gap phase 4's
+// redeemMu left open (it only ever protected one process) for both
+// halves of a redemption.
 //
-// What's *not* closed: if DecrementStock or the ledger Append fails
+// What's *not* closed: if DecrementStock or DebitIfSufficient fails
 // after the redemption record was already created, that record is left
 // behind describing a redemption that didn't fully happen — a genuine
 // distributed-transaction problem across two independent datastores
 // (DynamoDB and Postgres) that nothing here fully solves. A correct fix
-// is a saga or outbox pattern, which is phase 6/7 material, not bolted
-// on here as a false sense of safety.
+// is a saga or outbox pattern; phase 6 applies that pattern to the
+// session-completed event flow, but hasn't been retrofitted onto this
+// specific path yet.
 func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID, idempotencyKey string) (Redemption, error) {
 	if idempotencyKey == "" {
-		idempotencyKey = e.ids.next("redemption")
+		idempotencyKey = e.ids.Next("redemption")
 	}
 
 	if existing, err := e.redemptions.Get(ctx, idempotencyKey); err == nil {
@@ -256,6 +262,10 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID, idempoten
 		return Redemption{}, err
 	}
 	if balance < reward.CostPoints {
+		// Fast-path check, same reasoning as the Stock one above:
+		// DebitIfSufficient below is the real, atomic guarantee — this
+		// just avoids creating a redemption record for a request that's
+		// already visibly unaffordable.
 		return Redemption{}, fmt.Errorf("redeem: have %d, need %d: %w", balance, reward.CostPoints, ErrInsufficientBalance)
 	}
 
@@ -286,12 +296,16 @@ func (e *Engine) RedeemReward(ctx context.Context, playerID, rewardID, idempoten
 	}
 
 	entry := LedgerEntry{
-		Model:    Model{ID: e.ids.next("entry"), CreatedAt: e.clock.Now()},
+		Model:    Model{ID: e.ids.Next("entry"), CreatedAt: e.clock.Now()},
 		PlayerID: playerID,
 		Delta:    -reward.CostPoints,
 		Reason:   fmt.Sprintf("redeemed %s", reward.Name),
 	}
-	if err := e.ledger.Append(ctx, entry); err != nil {
+	// DebitIfSufficient, not Append: the authoritative, atomic
+	// check-and-debit — see its doc comment on LedgerRepository for why
+	// this is the piece that actually closes the cross-instance race the
+	// earlier fast-path Balance check above can't.
+	if _, _, err := e.ledger.DebitIfSufficient(ctx, entry, reward.CostPoints); err != nil {
 		return Redemption{}, fmt.Errorf("redeem: %w", err)
 	}
 

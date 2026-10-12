@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package player.v1;
+
+option go_package = "reward-platform/proto/player/v1;playerv1";
+
+// PlayerLedger is player-service's synchronous API for the one thing
+// another service (rewards-service, redeeming a reward) needs to ask or
+// tell it right away, not eventually via a queue: "what's this player's
+// balance" and "take N points off it." Everything else about a player
+// stays player-service's own business, reached over HTTP by end users,
+// never over gRPC by other services.
+service PlayerLedger {
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc DebitPoints(DebitPointsRequest) returns (DebitPointsResponse);
+}
+
+message GetBalanceRequest {
+  string player_id = 1;
+}
+
+message GetBalanceResponse {
+  int32 balance = 1;
+}
+
+message DebitPointsRequest {
+  string player_id = 1;
+  int32 amount = 2;
+  string reason = 3;
+  // idempotency_key: a retried DebitPoints call (the caller timed out
+  // waiting for a response, say) must reuse the same key, so
+  // player-service can tell "retry of a call that already succeeded"
+  // apart from "a second, genuinely new debit" — the same idempotency
+  // principle RedeemReward already uses for the HTTP layer, now applied
+  // across this service boundary too.
+  string idempotency_key = 4;
+}
+
+message DebitPointsResponse {
+  int32 new_balance = 1;
+}

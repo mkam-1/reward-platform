@@ -20,9 +20,32 @@ type PlayerRepository interface {
 // and sum in Go" on purpose: a real database answers "sum of deltas for
 // this player" with one indexed query, far cheaper than shipping every
 // row over the wire first and summing client-side.
+//
+// Both writes are idempotent, keyed by the entry's own ID, the same
+// shape as RedemptionRepository.Create: they report created=false
+// instead of erroring when that ID already exists. That's what lets
+// phase 6's CreditPoints/DebitPoints (services/player-service/internal/
+// ledger) be safely retried — an SQS message redelivered after a
+// timeout, or a gRPC call retried by a caller that never saw the first
+// response — reuse the same entry ID and land here again rather than
+// double-crediting or double-debiting.
 type LedgerRepository interface {
-	Append(ctx context.Context, entry LedgerEntry) error
+	// Append is for unconditional credits: a positive Delta can never
+	// overdraw a balance, so no check is needed before writing it.
+	Append(ctx context.Context, entry LedgerEntry) (created bool, err error)
+
 	Balance(ctx context.Context, playerID string) (int, error)
+
+	// DebitIfSufficient atomically checks that the player's balance is
+	// at least minBalance and, only if so, appends entry (whose Delta
+	// must be negative) — the check and the write happen as one atomic
+	// operation, so two concurrent debits for the same player can never
+	// both pass a balance check that only actually covers one of them.
+	// This is what finally closes the race flagged back in phase 4's
+	// Engine.RedeemReward comments: once Reward moved to DynamoDB
+	// (phase 5) with its own atomic DecrementStock, the ledger side was
+	// the one half still unguarded — this method is that other half.
+	DebitIfSufficient(ctx context.Context, entry LedgerEntry, minBalance int) (newBalance int, created bool, err error)
 }
 
 // RewardRepository persists Rewards. DecrementStock is its own method,

@@ -19,7 +19,7 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, domain.ErrInsufficientBalance), errors.Is(err, domain.ErrOutOfStock):
+	case errors.Is(err, domain.ErrInsufficientBalance):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
