@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	_ "net/http/pprof" //nolint:gosec // G108: registered on DefaultServeMux, but only ever served on a loopback-only listener below
 	"os"
 	"os/signal"
 	"syscall"
@@ -35,6 +36,19 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// pprof on a loopback-only port, never exposed through the ALB/Service.
+	// See rewards-service/main.go's identical block for the gosec
+	// G108/G114 reasoning.
+	pprofServer := &http.Server{
+		Addr:              "localhost:6061",
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprof listener stopped", "error", err)
+		}
+	}()
 
 	httpPort := os.Getenv("PORT")
 	if httpPort == "" {

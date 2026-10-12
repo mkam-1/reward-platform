@@ -1,0 +1,153 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write # needed for aws-actions/configure-aws-credentials' OIDC role assumption — no long-lived AWS keys stored in GitHub at all
+  contents: read
+
+env:
+  GO_VERSION: "1.27"
+  AWS_REGION: us-east-1
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+          working-directory: pkg/domain
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - pkg/domain
+          - mq
+          - services/player-service
+          - services/game-service
+          - services/rewards-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: go test (race + cover)
+        working-directory: ${{ matrix.module }}
+        run: go test ./... -race -cover
+
+  coverage-gate:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: bash scripts/check-coverage.sh 60
+
+  # Builds and pushes images on every push to main. Separate from the
+  # ECS deploy step below so a build failure never leaves half the
+  # services updated and half stale.
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [lint, test, coverage-gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        service: [player-service, game-service, rewards-service]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Build and push ${{ matrix.service }}
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPO: reward-platform/${{ matrix.service }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$REPO:$TAG" -t "$REGISTRY/$REPO:latest" \
+            -f services/${{ matrix.service }}/Dockerfile .
+          docker push "$REGISTRY/$REPO:$TAG"
+          docker push "$REGISTRY/$REPO:latest"
+
+  terraform-plan:
+    runs-on: ubuntu-latest
+    needs: [lint, test, coverage-gate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - working-directory: infra/terraform
+        run: |
+          terraform init -backend-config=backend.hcl -input=false
+          terraform plan -input=false -out=tfplan
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+
+  # `environment: production` requires a manual approval in the repo's
+  # own settings (Settings -> Environments -> production -> required
+  # reviewers) — the actual gate that turns this from "auto-deploy
+  # everything on every merge" into "someone has to click approve
+  # before infrastructure changes or new images reach ECS."
+  terraform-apply:
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - working-directory: infra/terraform
+        run: |
+          terraform init -backend-config=backend.hcl -input=false
+          terraform apply -input=false -auto-approve
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, terraform-apply]
+    environment: production
+    strategy:
+      matrix:
+        service: [player-service, game-service, rewards-service]
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Force new deployment (picks up the :latest image just pushed)
+        run: |
+          aws ecs update-service \
+            --cluster reward-platform \
+            --service ${{ matrix.service }} \
+            --force-new-deployment

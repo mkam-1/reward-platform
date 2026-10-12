@@ -24,10 +24,10 @@ Real architectural decisions along the way are recorded as ADRs in
 | 8 | Testing depth | ✅ done |
 | 9 | Observability | ✅ done |
 | 10 | Containers & Kubernetes | ✅ done |
-| 11 | AWS deployment (ECS/DynamoDB/CloudWatch) | ⬜ not started |
-| 12 | IaC (Terraform/Terragrunt) | ⬜ not started |
-| 13 | CI/CD | ⬜ not started |
-| 14 | Performance & scale (capstone) | ⬜ not started |
+| 11 | AWS deployment (ECS/DynamoDB/CloudWatch) | ✅ code done, not `apply`'d |
+| 12 | IaC (Terraform/Terragrunt) | ✅ done |
+| 13 | CI/CD | ✅ done |
+| 14 | Performance & scale (capstone) | ✅ done |
 
 ## Phase 6 architecture: three services, two ways of talking to each other
 
@@ -270,6 +270,55 @@ kubectl -n reward-platform get pods -w
 (Manifests are validated with `python3 -c "import yaml; ..."` in this
 environment — no local kind/minikube cluster was stood up to `apply`
 against, given the time constraint this session is under.)
+
+## AWS deployment (phases 11-12)
+
+`infra/terraform/` provisions the real-AWS equivalent of the Kubernetes
+stack above: ECS Fargate (not EKS — see ADR-0008), the account's default
+VPC (no NAT gateway, cost guardrail), DynamoDB, RDS Postgres, SQS, one
+shared ALB with path-based routing, least-privilege IAM per service,
+and a CloudWatch budget alarm. `infra/terragrunt/` wraps it to generate
+per-environment remote state instead of hand-copying a backend block.
+
+```
+# One-time: creates the S3 bucket + DynamoDB lock table the main
+# config's remote state needs to exist in the first place.
+cd infra/terraform/bootstrap
+terraform init && terraform apply
+
+# Direct terraform (single "dev" state):
+cd infra/terraform
+terraform init -backend-config=backend.hcl
+TF_VAR_db_password=... TF_VAR_alarm_email=... terraform plan
+
+# Equivalently, via Terragrunt:
+cd infra/terragrunt/dev
+TF_VAR_db_password=... TF_VAR_alarm_email=... terragrunt plan
+```
+
+**Not run against real AWS this session** — validated with `terraform
+validate` (both the bootstrap and main configs) and `terraform fmt`,
+reviewed resource-by-resource, but never `apply`'d; see ADR-0008's
+Consequences section for why and what's still open before it would be.
+
+## CI/CD (phase 13)
+
+`.github/workflows/ci-cd.yml`: lint → test → coverage gate → (build +
+push images to ECR / `terraform plan`) → `terraform apply` → force a
+new ECS deployment. The apply and deploy jobs sit behind a GitHub
+Environment (`production`) with required reviewers configured in repo
+settings — nothing reaches real infrastructure without a manual
+approval click, even though the workflow itself triggers automatically
+on every push to `main`. [docs/rollback.md](docs/rollback.md) covers
+rolling back a bad deploy or a bad `apply`.
+
+## Performance (phase 14)
+
+pprof is wired into all three services on a loopback-only port (6061),
+never exposed through the ALB or a k8s Service. rewards-service adds a
+5-second read-through cache on the reward catalog listing and a per-IP
+rate limiter on the redemption endpoint. [docs/perf-report.md](docs/perf-report.md)
+has the before/after benchmark for the cache.
 
 ### If you're on native Windows instead
 

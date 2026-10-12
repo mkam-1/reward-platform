@@ -1,0 +1,6 @@
+aws_region  = "us-east-1"
+environment = "dev"
+alarm_email = "you@example.com"
+# db_password is deliberately NOT in here even as a placeholder —
+# always pass it via TF_VAR_db_password so it never touches a file at
+# all, committed or not.

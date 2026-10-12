@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof" //nolint:gosec // G108: registered on DefaultServeMux, but only ever served on a loopback-only listener below
 	"os"
 	"os/signal"
 	"syscall"
@@ -31,6 +32,24 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// pprof on a loopback-only port, never exposed through the ALB/Service
+	// — `go tool pprof http://localhost:6061/debug/pprof/profile` from
+	// inside the container/pod, or port-forwarded in from outside it.
+	// gosec G108 flags the pprof import as a blanket "don't expose this
+	// publicly" rule; binding to localhost only (never 0.0.0.0) is
+	// exactly the mitigation it's asking for. G114 (no-timeout
+	// ListenAndServe) is addressed by using an *http.Server with
+	// explicit timeouts instead of the bare package-level helper.
+	pprofServer := &http.Server{
+		Addr:              "localhost:6061",
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprof listener stopped", "error", err)
+		}
+	}()
 
 	port := os.Getenv("PORT")
 	if port == "" {

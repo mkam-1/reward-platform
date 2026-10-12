@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"reward-platform/pkg/domain"
 )
@@ -23,12 +25,24 @@ type PlayerBalance interface {
 	DebitPoints(ctx context.Context, playerID string, amount int, reason, idempotencyKey string) (newBalance int, err error)
 }
 
+// catalogCacheTTL bounds how stale a Rewards() list read can be. The
+// reward catalog is small, bounded, and admin-managed (same reasoning
+// ADR-0002/dynamodb.go gives for using a Scan over it) — a few seconds
+// of staleness after a RegisterReward or a redemption's DecrementStock
+// is an acceptable trade for not hitting DynamoDB on every single list
+// request, which is by far the most frequent read in this service.
+const catalogCacheTTL = 5 * time.Second
+
 type RewardCatalog struct {
 	clock         domain.Clock
 	ids           *domain.IDGenerator
 	rewards       domain.RewardRepository
 	redemptions   domain.RedemptionRepository
 	playerBalance PlayerBalance
+
+	cacheMu  sync.Mutex
+	cached   []domain.Reward
+	cachedAt time.Time
 }
 
 func New(clock domain.Clock, rewards domain.RewardRepository, redemptions domain.RedemptionRepository, playerBalance PlayerBalance) *RewardCatalog {
@@ -60,15 +74,36 @@ func (c *RewardCatalog) RegisterReward(ctx context.Context, name string, costPoi
 	if err := c.rewards.Put(ctx, r); err != nil {
 		return domain.Reward{}, fmt.Errorf("register reward: %w", err)
 	}
+	c.invalidateCache()
 	return r, nil
 }
 
 func (c *RewardCatalog) Rewards(ctx context.Context) ([]domain.Reward, error) {
+	c.cacheMu.Lock()
+	if c.cached != nil && c.clock.Now().Sub(c.cachedAt) < catalogCacheTTL {
+		cached := c.cached
+		c.cacheMu.Unlock()
+		return cached, nil
+	}
+	c.cacheMu.Unlock()
+
 	rewards, err := c.rewards.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list rewards: %w", err)
 	}
+
+	c.cacheMu.Lock()
+	c.cached = rewards
+	c.cachedAt = c.clock.Now()
+	c.cacheMu.Unlock()
+
 	return rewards, nil
+}
+
+func (c *RewardCatalog) invalidateCache() {
+	c.cacheMu.Lock()
+	c.cached = nil
+	c.cacheMu.Unlock()
 }
 
 // RedeemReward mirrors the shape of pkg/domain's original
@@ -127,6 +162,7 @@ func (c *RewardCatalog) RedeemReward(ctx context.Context, playerID, rewardID, id
 	if err := c.rewards.DecrementStock(ctx, rewardID); err != nil {
 		return domain.Redemption{}, fmt.Errorf("redeem: %w", err)
 	}
+	c.invalidateCache()
 
 	// Same idempotencyKey as the redemption record itself — player-
 	// service's DebitPoints uses it the same way: a retried gRPC call
