@@ -2,9 +2,9 @@
 
 This project is a learning path disguised as a real product: a mobile-gaming
 rewards/loyalty backend (players, games, a points ledger, a rewards catalog,
-redemptions), built phase by phase to go from Go fundamentals to the level
-expected of a 2-3 year Go backend engineer — mapped directly to a real Golang
-backend developer JD (microservices in Go, AWS ECS/DynamoDB/CloudWatch,
+redemptions), built phase by phase to go from Go fundamentals through
+production-grade backend engineering practice — mapped directly to a real
+Golang backend developer JD (microservices in Go, AWS ECS/DynamoDB/CloudWatch,
 Kubernetes, Terraform/Terragrunt, relational + NoSQL databases, unit/
 integration testing, CI/CD & DevOps, software architecture & design
 patterns).

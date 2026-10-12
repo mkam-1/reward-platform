@@ -1,8 +1,8 @@
 # reward-platform
 
 A mobile-gaming rewards/loyalty backend, built module by module to learn Go
-from the fundamentals up to the level expected of a 2-3 year Go backend
-engineer (microservices, AWS, Kubernetes, Terraform, SQL + NoSQL, testing,
+from the fundamentals up through production-grade backend engineering
+practice (microservices, AWS, Kubernetes, Terraform, SQL + NoSQL, testing,
 CI/CD). The full curriculum lives in [docs/curriculum.md](docs/curriculum.md).
 
 Domain: players earn points by playing games, and redeem points for rewards.
