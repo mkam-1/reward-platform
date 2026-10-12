@@ -86,3 +86,23 @@ resource "aws_security_group" "rds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
+resource "aws_security_group" "opensearch" {
+  name        = "reward-platform-opensearch"
+  description = "OpenSearch (log search — see logsink/ and ADR-0009): allow inbound 443 only from ECS tasks."
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_tasks.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}

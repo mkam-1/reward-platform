@@ -18,6 +18,7 @@ data:
   DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
   DYNAMODB_TABLE: "reward_platform"
   PLAYER_SERVICE_GRPC_ADDR: "player-service:9090"
+  ELASTICSEARCH_ENDPOINT: "http://elasticsearch:9200"
 ---
 apiVersion: v1
 kind: Secret

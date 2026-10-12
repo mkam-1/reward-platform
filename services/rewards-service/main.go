@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	_ "net/http/pprof" //nolint:gosec // G108: registered on DefaultServeMux, but only ever served on a loopback-only listener below
 	"os"
@@ -19,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"reward-platform/logsink"
 	"reward-platform/mq"
 	"reward-platform/services/rewards-service/internal/api"
 	"reward-platform/services/rewards-service/internal/catalog"
@@ -31,7 +31,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logsink.NewLogger("rewards-service", os.Getenv("ELASTICSEARCH_ENDPOINT"))
 
 	// pprof on a loopback-only port, never exposed through the ALB/Service
 	// — `go tool pprof http://localhost:6061/debug/pprof/profile` from

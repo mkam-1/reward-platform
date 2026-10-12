@@ -1,11 +1,12 @@
-go 1.26.6
+go 1.27.1
 
 use (
-	./pkg/domain
 	./cmd/rewardctl
-	./proto
+	./logsink
 	./mq
-	./services/player-service
+	./pkg/domain
+	./proto
 	./services/game-service
+	./services/player-service
 	./services/rewards-service
 )

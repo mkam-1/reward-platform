@@ -6,6 +6,7 @@ resources:
   - 10-postgres.yaml
   - 11-dynamodb-local.yaml
   - 12-sqs.yaml
+  - 13-elasticsearch.yaml
   - 20-player-service.yaml
   - 21-game-service.yaml
   - 22-rewards-service.yaml

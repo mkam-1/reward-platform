@@ -38,7 +38,12 @@ cd "$(dirname "$0")/.."
 #     interface it implements.
 #   - every module's own root package (main.go): wiring, not logic —
 #     already naturally near-impossible to unit test meaningfully.
-EXCLUDE_PATTERN='/internal/postgres/|/internal/dynamodb/|/internal/grpcclient/|/internal/catalog/mocks/|services/player-service/main\.go|services/game-service/main\.go|services/rewards-service/main\.go'
+#   - logsink/client.go: a thin wrapper around the Elasticsearch SDK's
+#     own HTTP calls — same reasoning as mq below, just a file-level
+#     exclusion instead of a whole-module one since logsink's other
+#     two files (handler.go, logger.go) have real logic and real tests
+#     (handler_test.go) worth holding to the bar.
+EXCLUDE_PATTERN='/internal/postgres/|/internal/dynamodb/|/internal/grpcclient/|/internal/catalog/mocks/|services/player-service/main\.go|services/game-service/main\.go|services/rewards-service/main\.go|logsink/client\.go'
 
 # Two modules deliberately excluded entirely:
 #   - cmd/rewardctl: a demo/CLI tool exercised manually
@@ -52,7 +57,7 @@ EXCLUDE_PATTERN='/internal/postgres/|/internal/dynamodb/|/internal/grpcclient/|/
 #     signal. This code was verified for real via the full docker-compose
 #     flow in phase 6, which is the more meaningful check for "does this
 #     actually talk to SQS correctly" than a mocked unit test would be.
-MODULES="pkg/domain services/player-service services/game-service services/rewards-service"
+MODULES="pkg/domain logsink services/player-service services/game-service services/rewards-service"
 
 fail=0
 printf "%-40s %10s %10s\n" "MODULE" "COVERAGE" "STATUS"

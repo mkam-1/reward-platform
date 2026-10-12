@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	_ "net/http/pprof" //nolint:gosec // G108: registered on DefaultServeMux, but only ever served on a loopback-only listener below
 	"os"
@@ -16,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"reward-platform/logsink"
 	"reward-platform/mq"
 	"reward-platform/pkg/domain"
 	"reward-platform/services/game-service/internal/api"
@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logsink.NewLogger("game-service", os.Getenv("ELASTICSEARCH_ENDPOINT"))
 
 	// pprof on a loopback-only port, never exposed through the ALB/Service.
 	// See rewards-service/main.go's identical block for the gosec

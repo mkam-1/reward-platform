@@ -1,8 +1,10 @@
 module reward-platform/services/game-service
 
-go 1.26.6
+go 1.27.1
 
 require (
+	github.com/prometheus/client_golang v1.25.0
+	reward-platform/logsink v0.0.0
 	reward-platform/mq v0.0.0
 	reward-platform/pkg/domain v0.0.0
 )
@@ -25,16 +27,23 @@ require (
 	github.com/aws/smithy-go v1.28.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/elastic/elastic-transport-go/v8 v8.9.0 // indirect
+	github.com/elastic/go-elasticsearch/v8 v8.19.7 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	go.opentelemetry.io/otel v1.29.0 // indirect
+	go.opentelemetry.io/otel/metric v1.29.0 // indirect
+	go.opentelemetry.io/otel/trace v1.29.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
 replace (
+	reward-platform/logsink => ../../logsink
 	reward-platform/mq => ../../mq
 	reward-platform/pkg/domain => ../../pkg/domain
 )

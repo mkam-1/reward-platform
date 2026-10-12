@@ -5,7 +5,7 @@
 export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"
 cd "$(dirname "$0")/.."
 
-MODULES="pkg/domain cmd/rewardctl mq proto services/player-service services/game-service services/rewards-service"
+MODULES="pkg/domain cmd/rewardctl mq logsink proto services/player-service services/game-service services/rewards-service"
 
 fail=0
 for mod in $MODULES; do

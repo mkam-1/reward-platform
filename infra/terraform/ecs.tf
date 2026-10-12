@@ -27,6 +27,7 @@ locals {
         { name = "SQS_ENDPOINT", value = "" },
         { name = "SESSION_COMPLETED_QUEUE", value = aws_sqs_queue.session_completed.url },
         { name = "POINTS_AWARDED_QUEUE", value = aws_sqs_queue.points_awarded.url },
+        { name = "ELASTICSEARCH_ENDPOINT", value = "https://${aws_opensearch_domain.logs.endpoint}" },
         { name = "AWS_REGION", value = var.aws_region },
       ]
       secrets = [
@@ -43,6 +44,7 @@ locals {
         { name = "PORT", value = "8080" },
         { name = "SQS_ENDPOINT", value = "" },
         { name = "SESSION_COMPLETED_QUEUE", value = aws_sqs_queue.session_completed.url },
+        { name = "ELASTICSEARCH_ENDPOINT", value = "https://${aws_opensearch_domain.logs.endpoint}" },
         { name = "AWS_REGION", value = var.aws_region },
       ]
       secrets = []
@@ -58,6 +60,7 @@ locals {
         { name = "DYNAMODB_ENDPOINT", value = "" },
         { name = "DYNAMODB_TABLE", value = aws_dynamodb_table.rewards.name },
         { name = "PLAYER_SERVICE_GRPC_ADDR", value = "player-service.reward-platform.internal:9090" },
+        { name = "ELASTICSEARCH_ENDPOINT", value = "https://${aws_opensearch_domain.logs.endpoint}" },
         { name = "AWS_REGION", value = var.aws_region },
       ]
       secrets = []

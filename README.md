@@ -136,9 +136,10 @@ cd ../..
 
 ### Trying the full stack (player-service + game-service + rewards-service)
 
-Six containers now: Postgres (players/ledger), DynamoDB Local
+Seven containers now: Postgres (players/ledger), DynamoDB Local
 (rewards/redemptions), ElasticMQ (SQS — `session-completed` and
-`points-awarded` queues), and the three Go services. First time only:
+`points-awarded` queues), Elasticsearch (log search), and the three Go
+services. First time only:
 
 ```
 cd deploy
@@ -242,6 +243,17 @@ by method/path/status).
 ```
 curl -s http://localhost:8080/readyz
 curl -s http://localhost:8080/metrics
+```
+
+### Log search (Elasticsearch)
+
+Every service ships its structured logs to Elasticsearch (OpenSearch on
+real AWS — see ADR-0009) in addition to stdout, via the shared
+`logsink/` module. `ELASTICSEARCH_ENDPOINT` is optional — unset, a
+service just logs to stdout exactly as before this existed.
+
+```
+curl -s "http://localhost:9200/logs-rewards-service-*/_search?q=level:ERROR&pretty"
 ```
 
 ## Kubernetes (phase 10)

@@ -36,6 +36,7 @@ jobs:
         module:
           - pkg/domain
           - mq
+          - logsink
           - services/player-service
           - services/game-service
           - services/rewards-service
